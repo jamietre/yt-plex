@@ -1,2 +1,0 @@
-fn(axum::extract::State<AppState>, CookieJar) -> impl std::future::Future<Output = impl IntoResponse> {logout}
-fn(axum::extract::State<AppState>, CookieJar) -> impl std::future::Future<Output = impl IntoResponse> {logout}: Handler<_, _>

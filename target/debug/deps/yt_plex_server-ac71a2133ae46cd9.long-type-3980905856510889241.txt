@@ -1,2 +1,0 @@
-fn(axum::extract::State<AppState>, CookieJar, Json<SubmitJobRequest>) -> impl std::future::Future<Output = impl IntoResponse> {submit_job}
-fn(axum::extract::State<AppState>, CookieJar, Json<SubmitJobRequest>) -> impl std::future::Future<Output = impl IntoResponse> {submit_job}: Handler<_, _>
