@@ -1,0 +1,1 @@
+cargo:rustc-env=MIME_TYPES_GENERATED_PATH=/home/jamiet/code/yt-plex/target/debug/build/mime_guess-e3c0bd7a7e60ace6/out/mime_types_generated.rs

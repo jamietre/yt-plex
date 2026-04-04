@@ -1,0 +1,2 @@
+fn(axum::extract::State<AppState>, CookieJar, Json<UpdateSettingsRequest>) -> impl std::future::Future<Output = impl IntoResponse> {update_settings}
+fn(axum::extract::State<AppState>, CookieJar, Json<UpdateSettingsRequest>) -> impl std::future::Future<Output = impl IntoResponse> {update_settings}: Handler<_, _>
