@@ -1,0 +1,18 @@
+[workspace]
+members = ["crates/common", "crates/server"]
+resolver = "2"
+
+[profile.dev]
+debug = false
+
+[workspace.dependencies]
+anyhow          = "1"
+clap            = { version = "4", features = ["derive"] }
+serde           = { version = "1", features = ["derive"] }
+serde_json      = "1"
+toml            = "0.8"
+tokio           = { version = "1", features = ["rt-multi-thread", "macros", "fs", "net", "time", "io-util", "process", "sync"] }
+tracing         = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono          = { version = "0.4", features = ["serde"] }
+uuid            = { version = "1", features = ["v4"] }
