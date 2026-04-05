@@ -28,13 +28,30 @@ export async function submitJob(url: string): Promise<Job> {
     return res.json();
 }
 
-export async function login(password: string): Promise<void> {
-    const res = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
-    });
-    if (!res.ok) throw new Error('Invalid password');
+export interface DeviceLoginResponse {
+  poll_token: string;
+  user_code: string;
+  verification_url: string;
+  expires_in: number;
+  interval: number;
+}
+
+export interface PollResponse {
+  status: 'pending' | 'done' | 'denied' | 'expired' | 'error';
+  interval?: number;
+  message?: string;
+}
+
+export async function startDeviceLogin(): Promise<DeviceLoginResponse> {
+  const res = await fetch('/api/auth/login');
+  if (!res.ok) throw new Error(`${res.status}`);
+  return res.json();
+}
+
+export async function pollDeviceAuth(token: string): Promise<PollResponse> {
+  const res = await fetch(`/api/auth/poll?token=${encodeURIComponent(token)}`);
+  if (!res.ok) throw new Error(`${res.status}`);
+  return res.json();
 }
 
 export async function logout(): Promise<void> {
