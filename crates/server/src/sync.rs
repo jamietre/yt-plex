@@ -114,10 +114,11 @@ pub async fn sync_channel(
     let mut lines = tokio::io::BufReader::new(stdout).lines();
     let now = Utc::now().to_rfc3339();
     let mut count = 0usize;
+    let mut new_ids: Vec<String> = Vec::new();
 
     while let Ok(Some(line)) = lines.next_line().await {
         if let Some(entry) = parse_flat_playlist_line(&line) {
-            db.upsert_video(
+            let is_new = db.upsert_video(
                 &entry.youtube_id,
                 channel_id,
                 &entry.title,
@@ -125,13 +126,32 @@ pub async fn sync_channel(
                 &now,
             )
             .context("upserting video")?;
+            if is_new {
+                new_ids.push(entry.youtube_id.clone());
+            }
             count += 1;
         }
     }
 
     child.wait().await.context("waiting for yt-dlp")?;
     db.set_channel_synced(channel_id, &now)?;
-    info!("synced {count} videos for {channel_url}");
+    info!("synced {count} videos for {channel_url} ({} new)", new_ids.len());
+
+    // Fetch descriptions for newly discovered videos so they're available for future search.
+    for youtube_id in &new_ids {
+        match fetch_video_description(youtube_id).await {
+            Ok(desc) => {
+                if let Err(e) = db.set_video_description(youtube_id, &desc) {
+                    warn!("set_video_description for {youtube_id}: {e:#}");
+                }
+            }
+            Err(e) => warn!("description fetch for {youtube_id}: {e:#}"),
+        }
+    }
+    if !new_ids.is_empty() {
+        info!("fetched descriptions for {} new videos in {channel_url}", new_ids.len());
+    }
+
     Ok(())
 }
 

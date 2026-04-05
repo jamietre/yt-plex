@@ -72,7 +72,7 @@
         ws.connect();
         unsubWs = ws.subscribe(() => {});
 
-        // Set up IntersectionObserver on the sentinel
+        // Set up IntersectionObserver on the sentinel — observe once, never re-observe
         observer = new IntersectionObserver((entries) => {
             if (entries[0].isIntersecting && hasMore && !loading) {
                 loadPage(false);
@@ -88,11 +88,6 @@
         if (searchTimer) clearTimeout(searchTimer);
     });
 
-    // Re-observe sentinel when it mounts (after first render)
-    $effect(() => {
-        if (sentinel && observer) observer.observe(sentinel);
-    });
-
     // Apply real-time WS updates to video status
     $effect(() => {
         const msg = $ws;
@@ -105,13 +100,6 @@
                 : v.status;
             return { ...v, status: newStatus };
         });
-    });
-
-    // Reload when filter or showIgnored changes
-    $effect(() => {
-        void filter;
-        void showIgnored;
-        resetAndLoad();
     });
 
     function handleSearchInput(e: Event) {
@@ -216,11 +204,11 @@
                 <button
                     class="pill"
                     class:active={filter === f}
-                    onclick={() => { filter = f; }}
+                    onclick={() => { filter = f; resetAndLoad(); }}
                 >{f}</button>
             {/each}
             <label class="toggle">
-                <input type="checkbox" bind:checked={showIgnored} />
+                <input type="checkbox" checked={showIgnored} onchange={() => { showIgnored = !showIgnored; resetAndLoad(); }} />
                 Show ignored
             </label>
         </div>

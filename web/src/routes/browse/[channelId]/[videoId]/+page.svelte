@@ -14,15 +14,19 @@
     let error = $state('');
     let actionWorking = $state(false);
     let actionMsg = $state('');
+    let isAdmin = $state(false);
 
     onMount(async () => {
-        try {
-            video = await getVideo(videoId);
-        } catch (e: unknown) {
-            error = e instanceof Error ? e.message : 'Failed to load video';
-        } finally {
-            loading = false;
+        const [videoResult] = await Promise.allSettled([
+            getVideo(videoId),
+            fetch('/api/auth/me').then(r => { isAdmin = r.ok; }),
+        ]);
+        if (videoResult.status === 'fulfilled') {
+            video = videoResult.value;
+        } else {
+            error = videoResult.reason instanceof Error ? videoResult.reason.message : 'Failed to load video';
         }
+        loading = false;
     });
 
     async function handleDownload() {
@@ -110,12 +114,14 @@
                     {/if}
                 </div>
                 {#if actionMsg}<p class="action-msg">{actionMsg}</p>{/if}
-                <a
-                    class="yt-link"
-                    href="https://www.youtube.com/watch?v={video.youtube_id}"
-                    target="_blank"
-                    rel="noreferrer"
-                >Watch on YouTube ↗</a>
+                {#if isAdmin}
+                    <a
+                        class="yt-link"
+                        href="https://www.youtube.com/watch?v={video.youtube_id}"
+                        target="_blank"
+                        rel="noreferrer"
+                    >Watch on YouTube ↗</a>
+                {/if}
             </div>
         </div>
 

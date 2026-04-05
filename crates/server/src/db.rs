@@ -185,6 +185,7 @@ impl Db {
         Ok(())
     }
 
+    /// Upsert a video. Returns `true` if the row was newly inserted, `false` if it already existed.
     pub fn upsert_video(
         &self,
         youtube_id: &str,
@@ -192,8 +193,16 @@ impl Db {
         title: &str,
         published_at: Option<&str>,
         last_seen_at: &str,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
+        let already_exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM videos WHERE youtube_id = ?1",
+                rusqlite::params![youtube_id],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        let is_new = !already_exists;
         conn.execute(
             "INSERT INTO videos (youtube_id, channel_id, title, published_at, last_seen_at)
              VALUES (?1, ?2, ?3, ?4, ?5)
@@ -202,7 +211,7 @@ impl Db {
                last_seen_at = excluded.last_seen_at",
             rusqlite::params![youtube_id, channel_id, title, published_at, last_seen_at],
         )?;
-        Ok(())
+        Ok(is_new)
     }
 
     pub fn set_video_downloaded(&self, youtube_id: &str, downloaded_at: &str) -> Result<()> {
@@ -326,7 +335,7 @@ impl Db {
                     v.description
              FROM videos v
              WHERE v.channel_id = ?1
-               AND (?2 IS NULL OR v.rowid IN (SELECT rowid FROM videos_fts WHERE videos_fts MATCH ?2))
+               AND (?2 IS NULL OR v.rowid IN (SELECT rowid FROM videos_fts WHERE videos_fts MATCH ('title:' || ?2)))
                AND ({filter_cond})
              ORDER BY v.published_at DESC NULLS LAST, v.last_seen_at DESC
              LIMIT ?3 OFFSET ?4"
