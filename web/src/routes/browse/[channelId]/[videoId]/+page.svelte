@@ -84,7 +84,7 @@
         <div class="detail">
             <img
                 class="thumb"
-                src="https://img.youtube.com/vi/{video.youtube_id}/hqdefault.jpg"
+                src="/api/thumbnails/{video.youtube_id}"
                 alt={video.title}
             />
             <div class="info">

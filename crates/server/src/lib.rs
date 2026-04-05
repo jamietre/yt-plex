@@ -100,6 +100,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/videos/{youtube_id}", get(routes::videos::get_video))
         .route("/api/videos/{youtube_id}/ignore", post(routes::videos::ignore_video))
         .route("/api/videos/{youtube_id}/ignore", delete(routes::videos::unignore_video))
+        .route("/api/thumbnails/{youtube_id}", get(routes::thumbnails::get_thumbnail))
         .route("/ws", get(ws::ws_handler))
         .fallback(routes::assets::serve_asset)
         .with_state(state)

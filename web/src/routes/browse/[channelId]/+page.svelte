@@ -247,7 +247,7 @@
                 <a href="/browse/{channelId}/{video.youtube_id}" class="thumb-link">
                     <div class="thumb">
                         <img
-                            src="https://img.youtube.com/vi/{video.youtube_id}/mqdefault.jpg"
+                            src="/api/thumbnails/{video.youtube_id}"
                             alt={video.title}
                             loading="lazy"
                         />

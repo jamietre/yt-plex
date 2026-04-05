@@ -36,10 +36,25 @@ pub struct PlexConfig {
     pub library_section_id: String,
 }
 
+fn default_thumbnail_cache_dir() -> String {
+    let base = std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            PathBuf::from(home).join(".local").join("share")
+        });
+    base.join("yt-plex")
+        .join("thumbnails")
+        .to_string_lossy()
+        .into_owned()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputConfig {
     pub base_path: String,
     pub path_template: String,
+    #[serde(default = "default_thumbnail_cache_dir")]
+    pub thumbnail_cache_dir: String,
 }
 
 fn default_interval_hours() -> u64 {

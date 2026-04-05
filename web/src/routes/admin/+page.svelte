@@ -182,6 +182,7 @@
                 <legend>Output</legend>
                 <label>Base path <input bind:value={settings.output.base_path} /></label>
                 <label>Path template <input bind:value={settings.output.path_template} /></label>
+                <label>Thumbnail cache <input bind:value={settings.output.thumbnail_cache_dir} /></label>
                 <small>
                     Variables: <code>{'{channel}'}</code> channel name, <code>{'{title}'}</code> video title,
                     <code>{'{id}'}</code> YouTube video ID, <code>{'{ext}'}</code> file extension,

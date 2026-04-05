@@ -61,7 +61,7 @@ export async function logout(): Promise<void> {
 
 export interface Settings {
     plex: { url: string; token: string; library_section_id: string };
-    output: { base_path: string; path_template: string };
+    output: { base_path: string; path_template: string; thumbnail_cache_dir: string };
 }
 
 export async function getSettings(): Promise<Settings> {
