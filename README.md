@@ -33,16 +33,18 @@ The binary lands at `target/release/yt-plex`.
 > cargo build --release -p yt-plex-server
 > ```
 
-### 3. Create a config file
+### 3. Create Google OAuth credentials
+
+Go to [console.cloud.google.com](https://console.cloud.google.com) → **APIs & Services** → **Credentials** → **Create OAuth 2.0 Client ID**.
+
+Choose type **"TVs and Limited Input devices"**. No redirect URIs are needed (the app uses device flow and does not need to be publicly accessible).
+
+Copy the **Client ID** and **Client Secret** for the config below.
+
+### 4. Create a config file
 
 ```bash
 mkdir -p ~/.config/yt-plex
-```
-
-Generate a password hash:
-
-```bash
-./target/release/yt-plex hash-password YOUR_PASSWORD
 ```
 
 Create `~/.config/yt-plex/config.toml`:
@@ -52,7 +54,11 @@ Create `~/.config/yt-plex/config.toml`:
 bind = "0.0.0.0:3000"
 
 [auth]
-admin_password_hash = "<output from hash-password above>"
+admin_emails = ["you@gmail.com"]
+
+[google_oauth]
+client_id = "your-client-id.apps.googleusercontent.com"
+client_secret = "your-client-secret"
 
 [plex]
 url = "http://192.168.1.x:32400"
@@ -70,7 +76,7 @@ path_template = "{channel}/{date} - {title}.{ext}"
 
 **Path template variables:** `{channel}`, `{title}`, `{date}` (YYYY-MM-DD), `{ext}`
 
-### 4. Run
+### 5. Run
 
 ```bash
 ./target/release/yt-plex
@@ -82,10 +88,12 @@ Open `http://localhost:3000` in your browser.
 
 ## Usage
 
-1. Log in with the admin password you configured.
-2. Paste a YouTube URL into the input box and click **Add**.
-3. The server downloads the video in the background, copies it to your Plex path, and triggers a library scan.
-4. Job status updates live in the browser via WebSocket.
+1. Click **Sign in with Google**. You'll see a short code and a URL.
+2. On any device, open the URL and enter the code to authenticate with your Google account.
+3. Once authorised, the browser redirects you to the dashboard automatically.
+4. Paste a YouTube URL into the input box and click **Add**.
+5. The server downloads the video in the background, copies it to your Plex path, and triggers a library scan.
+6. Job status updates live in the browser via WebSocket.
 
 ## Development
 
