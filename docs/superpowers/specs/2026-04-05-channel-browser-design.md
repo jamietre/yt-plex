@@ -132,9 +132,9 @@ This embeds the video ID in the filename (e.g. `Veritasium/2026-04-05 - Why Blac
 |---|---|---|---|
 | `GET` | `/api/channels` | None | List all channels with `last_synced_at` |
 | `POST` | `/api/channels` | Admin | Add channel; triggers first sync immediately |
-| `DELETE` | `/api/channels/:id` | Admin | Remove channel and its videos |
+| `DELETE` | `/api/channels/:id` | Admin | Remove channel and its `videos` rows. Any in-progress jobs for that channel's videos continue to completion. |
 | `POST` | `/api/channels/:id/sync` | None | Trigger manual sync for one channel |
-| `GET` | `/api/channels/:id/videos` | None | List videos with derived status. Query params: `filter=new\|downloaded\|all`, `show_ignored=true` |
+| `GET` | `/api/channels/:id/videos` | None | List videos with derived status, ordered by `published_at DESC` (newest first). Query params: `filter=new\|downloaded\|all`, `show_ignored=true` |
 | `POST` | `/api/videos/:youtube_id/ignore` | None | Mark video as ignored |
 | `DELETE` | `/api/videos/:youtube_id/ignore` | None | Un-ignore video |
 
