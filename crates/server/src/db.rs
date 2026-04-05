@@ -295,6 +295,7 @@ impl Db {
                 last_seen_at: row.get(5)?,
                 ignored_at: row.get(6)?,
                 status,
+                description: None,  // populated lazily on detail page visit
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)

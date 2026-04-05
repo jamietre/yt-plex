@@ -105,6 +105,14 @@ pub struct Video {
     pub last_seen_at: String,
     pub ignored_at: Option<String>,
     pub status: VideoStatus,
+    pub description: Option<String>,
+}
+
+/// Paginated response for list_videos_for_channel.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VideoPage {
+    pub videos: Vec<Video>,
+    pub has_more: bool,
 }
 
 /// Filter parameter for list_videos_for_channel.
@@ -211,5 +219,32 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(!json.contains("youtube_id"));
+    }
+
+    #[test]
+    fn video_has_description_field() {
+        let v = Video {
+            youtube_id: "abc".into(),
+            channel_id: "ch1".into(),
+            title: "Title".into(),
+            published_at: None,
+            downloaded_at: None,
+            last_seen_at: "2026-04-05T00:00:00Z".into(),
+            ignored_at: None,
+            status: VideoStatus::New,
+            description: Some("A description".into()),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains("\"description\":\"A description\""));
+    }
+
+    #[test]
+    fn video_page_serialises() {
+        let page = VideoPage {
+            videos: vec![],
+            has_more: false,
+        };
+        let json = serde_json::to_string(&page).unwrap();
+        assert!(json.contains("\"has_more\":false"));
     }
 }
