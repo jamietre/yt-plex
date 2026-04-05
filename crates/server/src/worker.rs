@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc, time::Duration};
-use tokio::io::AsyncBufReadExt;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use tokio::process::Command;
 use tracing::{error, info, warn};
 use yt_plex_common::{config::Config, models::JobStatus};
@@ -71,6 +71,17 @@ async fn tick(
         .spawn()
         .context("spawning yt-dlp (is it installed?)")?;
 
+    // Drain stdout in background to prevent pipe-buffer deadlock with stderr
+    let stdout_pipe = child.stdout.take().expect("stdout piped");
+    let stdout_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        tokio::io::BufReader::new(stdout_pipe)
+            .read_to_end(&mut buf)
+            .await
+            .ok();
+        buf
+    });
+
     let stderr_pipe = child.stderr.take().expect("stderr piped");
     let mut stderr_lines = tokio::io::BufReader::new(stderr_pipe).lines();
     let mut stderr_buf = String::new();
@@ -91,9 +102,10 @@ async fn tick(
         stderr_buf.push('\n');
     }
 
-    let output = child.wait_with_output().await.context("waiting for yt-dlp")?;
+    let stdout_bytes = stdout_task.await.context("reading yt-dlp stdout")?;
+    let exit_status = child.wait().await.context("waiting for yt-dlp")?;
 
-    if !output.status.success() {
+    if !exit_status.success() {
         db.update_job(&job.id, JobStatus::Failed, None, None, Some(&stderr_buf))?;
         let updated = db.get_job(&job.id)?.unwrap();
         hub.broadcast(&yt_plex_common::models::WsMessage::from_job(&updated));
@@ -101,7 +113,7 @@ async fn tick(
         return Ok(());
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
     // yt-dlp may print multiple JSON lines (playlist); take the last non-empty one
     let last_line = stdout
         .lines()
