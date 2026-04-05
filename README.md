@@ -6,7 +6,11 @@ Download YouTube videos via yt-dlp and sync them to your Plex media server.
 
 - [Rust](https://rustup.rs/) (stable)
 - [mise](https://mise.jdx.dev/) (manages Node.js and pnpm versions)
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) on your `PATH`
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) on your `PATH` — install on Debian/Ubuntu:
+  ```bash
+  curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ~/.local/bin/yt-dlp
+  chmod a+rx ~/.local/bin/yt-dlp
+  ```
 - A running Plex Media Server
 
 ## Setup
