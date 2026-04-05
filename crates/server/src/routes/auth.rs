@@ -121,8 +121,7 @@ pub async fn oauth_callback(
     };
 
     // Exchange code for access token
-    let http = reqwest::Client::new();
-    let token_resp = match http
+    let token_resp = match state.http_client
         .post("https://oauth2.googleapis.com/token")
         .form(&[
             ("grant_type", "authorization_code"),
@@ -141,6 +140,10 @@ pub async fn oauth_callback(
         }
     };
 
+    if !token_resp.status().is_success() {
+        warn!("token exchange returned HTTP {}", token_resp.status());
+        return error_page("Failed to sign in with Google. Please try again.");
+    }
     let token_data: TokenResponse = match token_resp.json().await {
         Ok(d) => d,
         Err(e) => {
@@ -150,7 +153,7 @@ pub async fn oauth_callback(
     };
 
     // Fetch user's email from userinfo endpoint
-    let userinfo_resp = match http
+    let userinfo_resp = match state.http_client
         .get("https://www.googleapis.com/oauth2/v2/userinfo")
         .bearer_auth(&token_data.access_token)
         .send()
@@ -163,6 +166,10 @@ pub async fn oauth_callback(
         }
     };
 
+    if !userinfo_resp.status().is_success() {
+        warn!("userinfo returned HTTP {}", userinfo_resp.status());
+        return error_page("Failed to fetch user info from Google.");
+    }
     let userinfo: UserInfo = match userinfo_resp.json().await {
         Ok(d) => d,
         Err(e) => {

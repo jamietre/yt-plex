@@ -26,6 +26,7 @@ pub struct AppState {
     pub config_path: String,
     pub ws_hub: WsHub,
     pub oauth_states: Arc<Mutex<HashMap<String, Instant>>>,
+    pub http_client: reqwest::Client,
 }
 
 pub async fn create_app_state(config: Config, config_path: String) -> Result<AppState> {
@@ -51,6 +52,7 @@ pub async fn create_app_state(config: Config, config_path: String) -> Result<App
         config_path,
         ws_hub,
         oauth_states: Arc::new(Mutex::new(HashMap::new())),
+        http_client: reqwest::Client::new(),
     })
 }
 
