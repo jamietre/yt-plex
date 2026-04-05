@@ -176,7 +176,8 @@ async fn tick(
     // Mark video as downloaded in the videos table (if it was tracked)
     if db.video_exists(&meta.id).unwrap_or(false) {
         let now_str = Utc::now().to_rfc3339();
-        if let Err(e) = db.set_video_downloaded(&meta.id, &now_str) {
+        let path_str = dest.to_string_lossy();
+        if let Err(e) = db.set_video_downloaded(&meta.id, &now_str, &path_str) {
             warn!("set_video_downloaded failed for {}: {e:#}", meta.id);
         }
     }

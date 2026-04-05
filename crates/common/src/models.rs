@@ -106,6 +106,7 @@ pub struct Video {
     pub ignored_at: Option<String>,
     pub status: VideoStatus,
     pub description: Option<String>,
+    pub file_path: Option<String>,
 }
 
 /// Paginated response for list_videos_for_channel.
@@ -233,6 +234,7 @@ mod tests {
             ignored_at: None,
             status: VideoStatus::New,
             description: Some("A description".into()),
+            file_path: None,
         };
         let json = serde_json::to_string(&v).unwrap();
         assert!(json.contains("\"description\":\"A description\""));

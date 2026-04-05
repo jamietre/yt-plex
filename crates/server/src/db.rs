@@ -214,11 +214,11 @@ impl Db {
         Ok(is_new)
     }
 
-    pub fn set_video_downloaded(&self, youtube_id: &str, downloaded_at: &str) -> Result<()> {
+    pub fn set_video_downloaded(&self, youtube_id: &str, downloaded_at: &str, file_path: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE videos SET downloaded_at = ?1 WHERE youtube_id = ?2",
-            rusqlite::params![downloaded_at, youtube_id],
+            "UPDATE videos SET downloaded_at = ?1, file_path = ?2 WHERE youtube_id = ?3",
+            rusqlite::params![downloaded_at, file_path, youtube_id],
         )?;
         Ok(())
     }
@@ -262,7 +262,8 @@ impl Db {
                         WHEN v.ignored_at IS NOT NULL THEN 'ignored'
                         ELSE 'new'
                     END as derived_status,
-                    v.description
+                    v.description,
+                    v.file_path
              FROM videos v
              WHERE v.youtube_id = ?1"
         );
@@ -286,6 +287,7 @@ impl Db {
                 ignored_at: row.get(6)?,
                 status,
                 description: row.get(8)?,
+                file_path: row.get(9)?,
             })
         })?;
         rows.next().transpose().map_err(Into::into)
@@ -332,7 +334,8 @@ impl Db {
                         WHEN v.ignored_at IS NOT NULL THEN 'ignored'
                         ELSE 'new'
                     END as derived_status,
-                    v.description
+                    v.description,
+                    v.file_path
              FROM videos v
              WHERE v.channel_id = ?1
                AND (?2 IS NULL OR v.rowid IN (SELECT rowid FROM videos_fts WHERE videos_fts MATCH ('title:' || ?2)))
@@ -365,6 +368,7 @@ impl Db {
                     ignored_at: row.get(6)?,
                     status,
                     description: row.get(8)?,
+                    file_path: row.get(9)?,
                 })
             },
         )?;
@@ -436,7 +440,8 @@ CREATE TABLE IF NOT EXISTS videos (
     downloaded_at TEXT,
     last_seen_at  TEXT NOT NULL,
     ignored_at    TEXT,
-    description   TEXT
+    description   TEXT,
+    file_path     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_videos_channel_id ON videos(channel_id);
@@ -628,7 +633,7 @@ mod tests {
         let db = test_db();
         let ch = insert_test_channel(&db);
         db.upsert_video("abc123", &ch.id, "Test Video", None, "2026-04-05T00:00:00Z").unwrap();
-        db.set_video_downloaded("abc123", "2026-04-05T12:00:00Z").unwrap();
+        db.set_video_downloaded("abc123", "2026-04-05T12:00:00Z", "/tmp/test.mp4").unwrap();
         let page = db.list_videos_for_channel(&ch.id, VideoFilter::New, false, None, 50, 0).unwrap();
         let new_videos = page.videos;
         assert_eq!(new_videos.len(), 0);
@@ -708,7 +713,7 @@ mod tests {
         let ch = insert_test_channel(&db);
         db.upsert_video("abc123", &ch.id, "Original Title", None, "2026-04-05T00:00:00Z").unwrap();
         // Mark as downloaded so we can assert it's preserved
-        db.set_video_downloaded("abc123", "2026-04-05T06:00:00Z").unwrap();
+        db.set_video_downloaded("abc123", "2026-04-05T06:00:00Z", "/tmp/test.mp4").unwrap();
         // Upsert again with updated title and last_seen_at
         db.upsert_video("abc123", &ch.id, "Updated Title", None, "2026-04-05T12:00:00Z").unwrap();
         let page = db.list_videos_for_channel(&ch.id, VideoFilter::Downloaded, false, None, 50, 0).unwrap();

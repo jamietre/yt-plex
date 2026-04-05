@@ -168,7 +168,8 @@ pub fn scan_filesystem(base_path: &str, db: &Db) -> Result<()> {
     {
         if let Some(youtube_id) = extract_youtube_id_from_path(entry.path()) {
             if db.video_exists(&youtube_id)? {
-                db.set_video_downloaded(&youtube_id, &now)?;
+                let path_str = entry.path().to_string_lossy();
+                db.set_video_downloaded(&youtube_id, &now, &path_str)?;
                 found += 1;
             }
         }

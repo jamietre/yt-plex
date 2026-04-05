@@ -98,6 +98,7 @@ export interface Video {
     ignored_at: string | null;
     status: VideoStatus;
     description: string | null;
+    file_path: string | null;
 }
 
 export interface VideoPage {

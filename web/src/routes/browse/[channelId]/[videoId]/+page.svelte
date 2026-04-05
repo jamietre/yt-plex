@@ -95,6 +95,9 @@
                 <p class="status" style="color:{statusColour[video.status]}">
                     {statusLabel[video.status]}
                 </p>
+                {#if video.file_path}
+                    <p class="file-path" title={video.file_path}>{video.file_path}</p>
+                {/if}
                 <div class="actions">
                     {#if video.status === 'new'}
                         <button class="btn-primary" onclick={handleDownload} disabled={actionWorking}>
@@ -155,6 +158,7 @@
     .btn-disabled { background: #222; color: #666; border: 1px solid #444; border-radius: 4px; padding: 0.4rem 1rem; font-size: 0.9rem; cursor: default; }
     .btn-disabled.downloaded { color: #4c4; border-color: #4c4; }
     .action-msg { font-size: 0.8rem; color: #4c4; margin: 0; }
+    .file-path { font-size: 0.75rem; color: #666; font-family: monospace; word-break: break-all; margin: 0 0 0.5rem; }
     .yt-link { color: #4af; font-size: 0.8rem; text-decoration: none; }
     .yt-link:hover { text-decoration: underline; }
 
