@@ -75,9 +75,9 @@ CREATE TABLE profile_video_ignores (
 | `GET` | `/api/profile-session` | any | Return current profile from cookie |
 | `POST` | `/api/profile-session` | any | Set `yt_plex_profile` cookie `{profile_id}` |
 | `DELETE` | `/api/profile-session` | any | Clear profile cookie |
-| `GET` | `/api/profiles/{id}/channels` | admin | List channels subscribed by profile |
-| `PUT` | `/api/profiles/{id}/channels/{cid}` | admin | Subscribe channel to profile |
-| `DELETE` | `/api/profiles/{id}/channels/{cid}` | admin | Unsubscribe channel from profile |
+| `GET` | `/api/profiles/{id}/channels` | profile owner or admin | List channels subscribed by profile |
+| `PUT` | `/api/profiles/{id}/channels/{cid}` | profile owner or admin | Subscribe channel to profile |
+| `DELETE` | `/api/profiles/{id}/channels/{cid}` | profile owner or admin | Unsubscribe channel from profile |
 
 **Existing endpoints modified:**
 - `GET /api/channels` — filter to `profile_channels` for current profile (admin sees all)
@@ -114,9 +114,9 @@ CREATE TABLE profile_video_ignores (
 - [ ] Implement `get_session` handler (GET /api/profile-session — reads cookie, returns profile)
 - [ ] Implement `set_session` handler (POST /api/profile-session — validates profile exists, sets cookie)
 - [ ] Implement `clear_session` handler (DELETE /api/profile-session — clears cookie)
-- [ ] Implement `list_profile_channels` handler (GET /api/profiles/{id}/channels)
-- [ ] Implement `subscribe_channel` handler (PUT /api/profiles/{id}/channels/{cid})
-- [ ] Implement `unsubscribe_channel` handler (DELETE /api/profiles/{id}/channels/{cid})
+- [ ] Implement `list_profile_channels` handler (GET /api/profiles/{id}/channels — profile owner or admin)
+- [ ] Implement `subscribe_channel` handler (PUT /api/profiles/{id}/channels/{cid} — profile owner or admin)
+- [ ] Implement `unsubscribe_channel` handler (DELETE /api/profiles/{id}/channels/{cid} — profile owner or admin)
 - [ ] Register all routes in `lib.rs`
 
 ### Task 3: Admin OAuth auto-profile
@@ -148,13 +148,18 @@ CREATE TABLE profile_video_ignores (
 - [ ] Show current profile name in the nav bar (fetch from `/api/profile-session`)
 - [ ] Add "Switch profile" link in nav that clears cookie and returns to `/select-profile`
 
-### Task 7: Frontend — admin Profiles tab
+### Task 7: Frontend — channel subscription UI (self-service)
+
+- [ ] Add a channel subscription toggle (subscribe/unsubscribe) on the `/browse` channel grid for each channel card
+- [ ] Show only subscribed channels by default; include an "All channels" toggle to browse unsubscribed ones
+- [ ] Wire to `PUT`/`DELETE /api/profiles/{id}/channels/{cid}` using the current profile id
+
+### Task 8: Frontend — admin Profiles tab
 
 - [ ] Add "Profiles" tab to `/admin` page
 - [ ] List existing non-admin profiles with delete buttons
 - [ ] "New profile" form (name input + create button)
-- [ ] Per-profile channel subscription panel: checkboxes for each channel
-- [ ] Wire to new API endpoints
+- [ ] Wire to profile CRUD endpoints (no channel management needed here)
 
 ---
 
