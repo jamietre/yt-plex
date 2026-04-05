@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
+    import { onMount, onDestroy } from 'svelte';
     import {
         getSettings, updateSettings, type Settings,
         listChannels, addChannel, deleteChannel, syncChannel,
@@ -24,6 +24,9 @@
     let newChannelName = $state('');
     let channelError = $state('');
     let addingChannel = $state(false);
+    // IDs of channels currently being synced (background poll clears them)
+    let syncingIds = $state(new Set<string>());
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
 
     // URL submission
     let submitUrl = $state('');
@@ -35,6 +38,8 @@
         try { settings = await getSettings(); } catch { settingsError = 'Failed to load settings'; }
         try { channels = await listChannels(); } catch { /* ignore */ }
     });
+
+    onDestroy(() => { if (pollTimer) clearInterval(pollTimer); });
 
     async function saveSettings() {
         if (!settings) return;
@@ -65,7 +70,32 @@
     }
 
     async function handleSyncChannel(id: string) {
-        try { await syncChannel(id); } catch { /* ignore */ }
+        try {
+            await syncChannel(id);
+        } catch { /* ignore */ }
+        // Snapshot last_synced_at so we can detect when it changes
+        const before = channels.find(c => c.id === id)?.last_synced_at ?? null;
+        syncingIds = new Set([...syncingIds, id]);
+        startPolling(id, before);
+    }
+
+    function startPolling(id: string, beforeSyncedAt: string | null) {
+        if (pollTimer) return; // already polling
+        pollTimer = setInterval(async () => {
+            try {
+                const fresh = await listChannels();
+                const updated = fresh.find(c => c.id === id);
+                if (updated && updated.last_synced_at !== beforeSyncedAt) {
+                    // Sync finished — update the list and clear syncing state
+                    channels = fresh;
+                    syncingIds = new Set([...syncingIds].filter(x => x !== id));
+                }
+                if (syncingIds.size === 0) {
+                    clearInterval(pollTimer!);
+                    pollTimer = null;
+                }
+            } catch { /* ignore */ }
+        }, 3000);
     }
 
     async function handleSubmitUrl() {
@@ -100,13 +130,22 @@
                 <thead><tr><th>Name</th><th>URL</th><th>Last synced</th><th></th></tr></thead>
                 <tbody>
                     {#each channels as ch (ch.id)}
-                        <tr>
+                        {@const syncing = syncingIds.has(ch.id)}
+                        <tr class:syncing>
                             <td>{ch.name}</td>
                             <td class="url-cell"><a href={ch.youtube_channel_url} target="_blank" rel="noreferrer">{ch.youtube_channel_url}</a></td>
-                            <td>{ch.last_synced_at ? new Date(ch.last_synced_at).toLocaleString() : 'never'}</td>
+                            <td>
+                                {#if syncing}
+                                    <span class="sync-status">⟳ Syncing…</span>
+                                {:else}
+                                    {ch.last_synced_at ? new Date(ch.last_synced_at).toLocaleString() : 'never'}
+                                {/if}
+                            </td>
                             <td class="actions">
-                                <button onclick={() => handleSyncChannel(ch.id)}>↻ Sync</button>
-                                <button class="danger" onclick={() => handleDeleteChannel(ch.id)}>Remove</button>
+                                <button onclick={() => handleSyncChannel(ch.id)} disabled={syncing}>
+                                    {syncing ? '⟳ Syncing…' : '↻ Sync'}
+                                </button>
+                                <button class="danger" onclick={() => handleDeleteChannel(ch.id)} disabled={syncing}>Remove</button>
                             </td>
                         </tr>
                     {/each}
@@ -173,6 +212,8 @@
     fieldset { border: 1px solid #444; padding: 0.75rem; margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; }
     label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.9rem; color: #bbb; }
     small { color: #666; font-size: 0.8rem; }
+    tr.syncing td { opacity: 0.6; }
+    .sync-status { color: #fa4; font-size: 0.8rem; }
     .empty { color: #666; font-style: italic; font-size: 0.85rem; }
     .error { color: #f44; font-size: 0.85rem; }
     .ok { color: #4c4; font-size: 0.85rem; }
