@@ -208,6 +208,7 @@ impl Db {
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(youtube_id) DO UPDATE SET
                title = excluded.title,
+               published_at = COALESCE(excluded.published_at, videos.published_at),
                last_seen_at = excluded.last_seen_at",
             rusqlite::params![youtube_id, channel_id, title, published_at, last_seen_at],
         )?;
