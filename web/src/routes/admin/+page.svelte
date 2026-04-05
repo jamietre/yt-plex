@@ -182,7 +182,14 @@
                 <legend>Output</legend>
                 <label>Base path <input bind:value={settings.output.base_path} /></label>
                 <label>Path template <input bind:value={settings.output.path_template} /></label>
-                <small>Variables: {'{channel}'}, {'{date}'}, {'{title}'}, {'{id}'}, {'{ext}'}</small>
+                <small>
+                    Variables: <code>{'{channel}'}</code> channel name, <code>{'{date}'}</code> upload date (YYYYMMDD),
+                    <code>{'{title}'}</code> video title, <code>{'{id}'}</code> YouTube video ID, <code>{'{ext}'}</code> file extension.
+                    <br />
+                    <strong>Important:</strong> the YouTube ID must appear wrapped in square brackets somewhere in the filename
+                    (e.g. <code>{'[{id}]'}</code>) so the server can match downloaded files back to their video record.
+                    Example: <code>{'{channel}/{title} [{id}].{ext}'}</code>
+                </small>
             </fieldset>
             {#if settingsError}<p class="error">{settingsError}</p>{/if}
             {#if settingsSaved}<p class="ok">Saved.</p>{/if}
@@ -211,7 +218,8 @@
     .actions { display: flex; gap: 0.4rem; white-space: nowrap; }
     fieldset { border: 1px solid #444; padding: 0.75rem; margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; }
     label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.9rem; color: #bbb; }
-    small { color: #666; font-size: 0.8rem; }
+    small { color: #666; font-size: 0.8rem; line-height: 1.6; }
+    small code { background: #2a2a3a; padding: 1px 4px; border-radius: 3px; font-size: 0.85em; color: #aaa; }
     tr.syncing td { opacity: 0.6; }
     .sync-status { color: #fa4; font-size: 0.8rem; }
     .empty { color: #666; font-style: italic; font-size: 0.85rem; }
