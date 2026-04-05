@@ -4,7 +4,7 @@
 
 ## Overview
 
-Extends yt-plex with a channel browser: admins maintain a list of allowed YouTube channels; any user on the local network can browse those channels, see which videos are new vs already on Plex, download videos with one click, and ignore videos they don't want to see again.
+Extends yt-plex with a channel browser: admins maintain a list of allowed YouTube channels; any user on the local network can browse those approved channels, see which videos are new vs already on Plex, download videos with one click, and ignore videos they don't want to see again. Regular users cannot add channels or browse outside the approved list.
 
 The arbitrary URL submission feature (current admin homepage) becomes admin-only. Regular users interact exclusively through the channel browser.
 
@@ -14,7 +14,7 @@ The arbitrary URL submission feature (current admin homepage) becomes admin-only
 
 | Role | Auth | Capabilities |
 |---|---|---|
-| Regular user | None (anonymous) | Browse channels, view video status, download from approved channels, ignore videos |
+| Regular user | None (anonymous) | Browse admin-approved channels only, view video status, download from approved channels, ignore videos |
 | Admin | Google OAuth | All of the above, plus: manage channel list, submit arbitrary URLs, access Plex/output settings |
 
 This is a local-network app; no login is required for regular users. The ignore state is global (stored in SQLite) — shared across all users. Per-user ignore lists may be added later when user accounts are introduced.
