@@ -1,5 +1,4 @@
 use axum::{extract::{Path, State}, http::StatusCode, response::IntoResponse, Json};
-use chrono::Utc;
 use tracing::error;
 use crate::{routes::profiles::ProfileCookie, sync, AppState};
 

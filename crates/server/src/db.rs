@@ -14,7 +14,7 @@ impl Db {
     pub fn open(path: &str) -> Result<Self> {
         let conn =
             Connection::open(path).with_context(|| format!("opening database: {path}"))?;
-        conn.execute_batch(SCHEMA)?;
+        run_migrations(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -558,95 +558,131 @@ fn row_to_job(row: &rusqlite::Row) -> rusqlite::Result<Job> {
     })
 }
 
-const SCHEMA: &str = "
+// ── Database migrations ───────────────────────────────────────────────────────
+//
+// Rules:
+//   1. NEVER edit an existing migration — only append new ones.
+//   2. Each migration is applied exactly once; the applied version is stored
+//      in SQLite's built-in `PRAGMA user_version`.
+//   3. Additive column changes must use `ALTER TABLE … ADD COLUMN`.
+//   4. The pragmas block runs on every open (not versioned).
+
+const PRAGMAS: &str = "
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
-
-CREATE TABLE IF NOT EXISTS jobs (
-    id           TEXT PRIMARY KEY,
-    url          TEXT NOT NULL,
-    status       TEXT NOT NULL DEFAULT 'queued',
-    channel_name TEXT,
-    title        TEXT,
-    error        TEXT,
-    created_at   TEXT NOT NULL,
-    updated_at   TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
-    token      TEXT PRIMARY KEY,
-    created_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS channels (
-    id                   TEXT PRIMARY KEY,
-    youtube_channel_url  TEXT NOT NULL UNIQUE,
-    name                 TEXT NOT NULL,
-    last_synced_at       TEXT
-);
-
-CREATE TABLE IF NOT EXISTS videos (
-    youtube_id    TEXT PRIMARY KEY,
-    channel_id    TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
-    title         TEXT NOT NULL,
-    published_at  TEXT,
-    downloaded_at TEXT,
-    last_seen_at  TEXT NOT NULL,
-    ignored_at    TEXT,
-    description   TEXT,
-    file_path     TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_videos_channel_id ON videos(channel_id);
-CREATE INDEX IF NOT EXISTS idx_videos_published_at ON videos(published_at DESC);
-
--- FTS5 virtual table for title+description search (content-table backed, triggers keep in sync)
-CREATE VIRTUAL TABLE IF NOT EXISTS videos_fts USING fts5(
-    title,
-    description,
-    content=videos,
-    content_rowid=rowid
-);
-
-CREATE TRIGGER IF NOT EXISTS videos_fts_insert AFTER INSERT ON videos BEGIN
-    INSERT INTO videos_fts(rowid, title, description)
-    VALUES (new.rowid, new.title, new.description);
-END;
-
-CREATE TRIGGER IF NOT EXISTS videos_fts_update AFTER UPDATE ON videos BEGIN
-    INSERT INTO videos_fts(videos_fts, rowid, title, description)
-    VALUES ('delete', old.rowid, old.title, old.description);
-    INSERT INTO videos_fts(rowid, title, description)
-    VALUES (new.rowid, new.title, new.description);
-END;
-
-CREATE TRIGGER IF NOT EXISTS videos_fts_delete AFTER DELETE ON videos BEGIN
-    INSERT INTO videos_fts(videos_fts, rowid, title, description)
-    VALUES ('delete', old.rowid, old.title, old.description);
-END;
-
-CREATE TABLE IF NOT EXISTS profiles (
-    id               INTEGER PRIMARY KEY,
-    name             TEXT    NOT NULL UNIQUE,
-    linked_email     TEXT,
-    is_admin_profile INTEGER NOT NULL DEFAULT 0,
-    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-);
-
-CREATE TABLE IF NOT EXISTS profile_channels (
-    profile_id  INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-    channel_id  TEXT    NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
-    PRIMARY KEY (profile_id, channel_id)
-);
-
-CREATE TABLE IF NOT EXISTS profile_video_ignores (
-    profile_id  INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-    youtube_id  TEXT    NOT NULL,
-    ignored_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-    PRIMARY KEY (profile_id, youtube_id)
-);
 ";
+
+/// Ordered list of migrations. Index 0 = migration version 1.
+/// Never modify entries already in this list — only append.
+const MIGRATIONS: &[&str] = &[
+    // ── v1: initial schema ────────────────────────────────────────────────────
+    "
+    CREATE TABLE IF NOT EXISTS jobs (
+        id           TEXT PRIMARY KEY,
+        url          TEXT NOT NULL,
+        status       TEXT NOT NULL DEFAULT 'queued',
+        channel_name TEXT,
+        title        TEXT,
+        error        TEXT,
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+        token      TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS channels (
+        id                   TEXT PRIMARY KEY,
+        youtube_channel_url  TEXT NOT NULL UNIQUE,
+        name                 TEXT NOT NULL,
+        last_synced_at       TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS videos (
+        youtube_id    TEXT PRIMARY KEY,
+        channel_id    TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        title         TEXT NOT NULL,
+        published_at  TEXT,
+        downloaded_at TEXT,
+        last_seen_at  TEXT NOT NULL,
+        ignored_at    TEXT,
+        description   TEXT,
+        file_path     TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_videos_channel_id ON videos(channel_id);
+    CREATE INDEX IF NOT EXISTS idx_videos_published_at ON videos(published_at DESC);
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS videos_fts USING fts5(
+        title,
+        description,
+        content=videos,
+        content_rowid=rowid
+    );
+
+    CREATE TRIGGER IF NOT EXISTS videos_fts_insert AFTER INSERT ON videos BEGIN
+        INSERT INTO videos_fts(rowid, title, description)
+        VALUES (new.rowid, new.title, new.description);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS videos_fts_update AFTER UPDATE ON videos BEGIN
+        INSERT INTO videos_fts(videos_fts, rowid, title, description)
+        VALUES ('delete', old.rowid, old.title, old.description);
+        INSERT INTO videos_fts(rowid, title, description)
+        VALUES (new.rowid, new.title, new.description);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS videos_fts_delete AFTER DELETE ON videos BEGIN
+        INSERT INTO videos_fts(videos_fts, rowid, title, description)
+        VALUES ('delete', old.rowid, old.title, old.description);
+    END;
+
+    CREATE TABLE IF NOT EXISTS profiles (
+        id               INTEGER PRIMARY KEY,
+        name             TEXT    NOT NULL UNIQUE,
+        linked_email     TEXT,
+        is_admin_profile INTEGER NOT NULL DEFAULT 0,
+        created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS profile_channels (
+        profile_id  INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        channel_id  TEXT    NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        PRIMARY KEY (profile_id, channel_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS profile_video_ignores (
+        profile_id  INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        youtube_id  TEXT    NOT NULL,
+        ignored_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        PRIMARY KEY (profile_id, youtube_id)
+    );
+    ",
+    // ── v2: add your next migration here ─────────────────────────────────────
+    // "ALTER TABLE ... ADD COLUMN ...;",
+];
+
+fn run_migrations(conn: &Connection) -> Result<()> {
+    conn.execute_batch(PRAGMAS)?;
+
+    let current: i64 = conn
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .context("reading user_version")?;
+
+    for (i, sql) in MIGRATIONS.iter().enumerate() {
+        let version = (i + 1) as i64;
+        if current < version {
+            conn.execute_batch(sql)
+                .with_context(|| format!("applying migration v{version}"))?;
+            // PRAGMA user_version cannot use bound parameters
+            conn.execute_batch(&format!("PRAGMA user_version = {version};"))?;
+        }
+    }
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
