@@ -21,7 +21,8 @@
 
     async function loadVideos() {
         try {
-            videos = await listVideos(channelId, filter, showIgnored);
+            const page = await listVideos(channelId, filter, showIgnored);
+            videos = page.videos;
         } catch (e: unknown) {
             error = e instanceof Error ? e.message : 'Failed to load videos';
         }

@@ -97,6 +97,12 @@ export interface Video {
     last_seen_at: string;
     ignored_at: string | null;
     status: VideoStatus;
+    description: string | null;
+}
+
+export interface VideoPage {
+    videos: Video[];
+    has_more: boolean;
 }
 
 export async function listChannels(): Promise<Channel[]> {
@@ -132,9 +138,13 @@ export async function listVideos(
     channelId: string,
     filter: 'new' | 'downloaded' | 'all' = 'new',
     showIgnored = false,
-): Promise<Video[]> {
-    const params = new URLSearchParams({ filter });
+    search = '',
+    limit = 48,
+    offset = 0,
+): Promise<VideoPage> {
+    const params = new URLSearchParams({ filter, limit: String(limit), offset: String(offset) });
     if (showIgnored) params.set('show_ignored', 'true');
+    if (search) params.set('q', search);
     const res = await fetch(`/api/channels/${channelId}/videos?${params}`);
     if (!res.ok) throw new Error(`listVideos failed: ${res.status}`);
     return res.json();
@@ -148,6 +158,12 @@ export async function ignoreVideo(youtubeId: string): Promise<void> {
 export async function unignoreVideo(youtubeId: string): Promise<void> {
     const res = await fetch(`/api/videos/${youtubeId}/ignore`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`unignoreVideo failed: ${res.status}`);
+}
+
+export async function getVideo(youtubeId: string): Promise<Video> {
+    const res = await fetch(`/api/videos/${youtubeId}`);
+    if (!res.ok) throw new Error(`getVideo failed: ${res.status}`);
+    return res.json();
 }
 
 export async function submitJobByYoutubeId(youtubeId: string): Promise<Job> {
