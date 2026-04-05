@@ -61,9 +61,20 @@ pub async fn create_app_state(config: Config, config_path: String) -> Result<App
     check_dependencies()?;
 
     let ws_hub = WsHub::new();
+    let config_arc = Arc::new(std::sync::RwLock::new(config));
+
+    // Spawn background channel sync loop
+    {
+        let sync_db = Arc::clone(&db);
+        let sync_config = Arc::clone(&config_arc);
+        tokio::spawn(async move {
+            crate::sync::run_sync_loop(sync_db, sync_config).await;
+        });
+    }
+
     Ok(AppState {
         db,
-        config: Arc::new(std::sync::RwLock::new(config)),
+        config: config_arc,
         config_path,
         ws_hub,
         oauth_states: Arc::new(Mutex::new(HashMap::new())),

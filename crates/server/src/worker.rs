@@ -173,9 +173,19 @@ async fn tick(
         }
     }
 
+    // Mark video as downloaded in the videos table (if it was tracked)
+    if db.video_exists(&meta.id).unwrap_or(false) {
+        let now_str = Utc::now().to_rfc3339();
+        if let Err(e) = db.set_video_downloaded(&meta.id, &now_str) {
+            warn!("set_video_downloaded failed for {}: {e:#}", meta.id);
+        }
+    }
+
     db.update_job(&job.id, JobStatus::Done, None, None, None)?;
     let updated = db.get_job(&job.id)?.unwrap();
-    hub.broadcast(&yt_plex_common::models::WsMessage::from_job(&updated));
+    let mut done_msg = yt_plex_common::models::WsMessage::from_job(&updated);
+    done_msg.youtube_id = Some(meta.id.clone());
+    hub.broadcast(&done_msg);
     info!("done: {} → {}", job.url, dest.display());
 
     // Trigger Plex refresh
