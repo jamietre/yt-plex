@@ -78,3 +78,87 @@ export async function updateSettings(s: Settings): Promise<void> {
     });
     if (!res.ok) throw new Error(`updateSettings failed: ${res.status}`);
 }
+
+export type VideoStatus = 'new' | 'in_progress' | 'downloaded' | 'ignored';
+
+export interface Channel {
+    id: string;
+    youtube_channel_url: string;
+    name: string;
+    last_synced_at: string | null;
+}
+
+export interface Video {
+    youtube_id: string;
+    channel_id: string;
+    title: string;
+    published_at: string | null;
+    downloaded_at: string | null;
+    last_seen_at: string;
+    ignored_at: string | null;
+    status: VideoStatus;
+}
+
+export async function listChannels(): Promise<Channel[]> {
+    const res = await fetch('/api/channels');
+    if (!res.ok) throw new Error(`listChannels failed: ${res.status}`);
+    return res.json();
+}
+
+export async function addChannel(url: string, name: string): Promise<Channel> {
+    const res = await fetch('/api/channels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, name }),
+    });
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `addChannel failed: ${res.status}`);
+    }
+    return res.json();
+}
+
+export async function deleteChannel(id: string): Promise<void> {
+    const res = await fetch(`/api/channels/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`deleteChannel failed: ${res.status}`);
+}
+
+export async function syncChannel(id: string): Promise<void> {
+    const res = await fetch(`/api/channels/${id}/sync`, { method: 'POST' });
+    if (!res.ok) throw new Error(`syncChannel failed: ${res.status}`);
+}
+
+export async function listVideos(
+    channelId: string,
+    filter: 'new' | 'downloaded' | 'all' = 'new',
+    showIgnored = false,
+): Promise<Video[]> {
+    const params = new URLSearchParams({ filter });
+    if (showIgnored) params.set('show_ignored', 'true');
+    const res = await fetch(`/api/channels/${channelId}/videos?${params}`);
+    if (!res.ok) throw new Error(`listVideos failed: ${res.status}`);
+    return res.json();
+}
+
+export async function ignoreVideo(youtubeId: string): Promise<void> {
+    const res = await fetch(`/api/videos/${youtubeId}/ignore`, { method: 'POST' });
+    if (!res.ok) throw new Error(`ignoreVideo failed: ${res.status}`);
+}
+
+export async function unignoreVideo(youtubeId: string): Promise<void> {
+    const res = await fetch(`/api/videos/${youtubeId}/ignore`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`unignoreVideo failed: ${res.status}`);
+}
+
+export async function submitJobByYoutubeId(youtubeId: string): Promise<Job> {
+    const res = await fetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ youtube_id: youtubeId }),
+    });
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `submitJob failed: ${res.status}`);
+    }
+    return res.json();
+}

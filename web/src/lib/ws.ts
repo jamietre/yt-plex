@@ -8,6 +8,7 @@ export interface WsMessage {
     title: string | null;
     error: string | null;
     progress?: number | null;
+    youtube_id?: string | null;
 }
 
 export function createWsStore() {
