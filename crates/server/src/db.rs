@@ -20,21 +20,22 @@ impl Db {
         })
     }
 
-    pub fn insert_job(&self, url: &str) -> Result<Job> {
+    pub fn insert_job(&self, url: &str, channel_name: Option<&str>, title: Option<&str>) -> Result<Job> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
         let now_str = now.to_rfc3339();
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO jobs (id, url, status, created_at, updated_at) VALUES (?1, ?2, 'queued', ?3, ?3)",
-            rusqlite::params![id, url, now_str],
+            "INSERT INTO jobs (id, url, status, channel_name, title, created_at, updated_at)
+             VALUES (?1, ?2, 'queued', ?3, ?4, ?5, ?5)",
+            rusqlite::params![id, url, channel_name, title, now_str],
         )?;
         Ok(Job {
             id,
             url: url.to_owned(),
             status: JobStatus::Queued,
-            channel_name: None,
-            title: None,
+            channel_name: channel_name.map(str::to_owned),
+            title: title.map(str::to_owned),
             error: None,
             created_at: now,
             updated_at: now,
@@ -495,7 +496,7 @@ mod tests {
     #[test]
     fn insert_and_get_job() {
         let db = test_db();
-        let job = db.insert_job("https://youtube.com/watch?v=abc").unwrap();
+        let job = db.insert_job("https://youtube.com/watch?v=abc", None, None).unwrap();
         assert_eq!(job.status, JobStatus::Queued);
         assert_eq!(job.url, "https://youtube.com/watch?v=abc");
 
@@ -506,10 +507,10 @@ mod tests {
     #[test]
     fn list_jobs_returns_newest_first() {
         let db = test_db();
-        db.insert_job("https://youtube.com/watch?v=1").unwrap();
+        db.insert_job("https://youtube.com/watch?v=test", None, None).unwrap();
         // Small sleep to ensure different timestamps
         std::thread::sleep(std::time::Duration::from_millis(10));
-        db.insert_job("https://youtube.com/watch?v=2").unwrap();
+        db.insert_job("https://youtube.com/watch?v=test", None, None).unwrap();
         let jobs = db.list_jobs().unwrap();
         assert_eq!(jobs.len(), 2);
         assert!(jobs[0].created_at >= jobs[1].created_at);
@@ -518,7 +519,7 @@ mod tests {
     #[test]
     fn update_job_status_sets_fields() {
         let db = test_db();
-        let job = db.insert_job("https://youtube.com/watch?v=x").unwrap();
+        let job = db.insert_job("https://youtube.com/watch?v=test", None, None).unwrap();
         db.update_job(
             &job.id,
             JobStatus::Downloading,
@@ -535,9 +536,9 @@ mod tests {
     #[test]
     fn next_queued_job_returns_oldest() {
         let db = test_db();
-        let j1 = db.insert_job("https://youtube.com/watch?v=1").unwrap();
+        let j1 = db.insert_job("https://youtube.com/watch?v=test", None, None).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(10));
-        db.insert_job("https://youtube.com/watch?v=2").unwrap();
+        db.insert_job("https://youtube.com/watch?v=test", None, None).unwrap();
         let next = db.next_queued_job().unwrap().unwrap();
         assert_eq!(next.id, j1.id);
     }

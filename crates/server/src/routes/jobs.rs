@@ -25,16 +25,22 @@ pub async fn submit_job(
     SessionToken(token): SessionToken,
     Json(body): Json<SubmitJobRequest>,
 ) -> impl IntoResponse {
-    let url = if let Some(youtube_id) = &body.youtube_id {
+    // (url, channel_name, title)
+    let (url, prefill_channel, prefill_title) = if let Some(youtube_id) = &body.youtube_id {
         // Any user may queue a download by youtube_id — but only if the video
         // exists in an approved channel.
-        match state.db.video_exists(youtube_id) {
-            Ok(true) => format!("https://www.youtube.com/watch?v={youtube_id}"),
-            Ok(false) => {
+        match state.db.get_video(youtube_id) {
+            Ok(Some(video)) => {
+                let channel_name = state.db.get_channel(&video.channel_id)
+                    .ok().flatten().map(|c| c.name);
+                let url = format!("https://www.youtube.com/watch?v={youtube_id}");
+                (url, channel_name, Some(video.title))
+            }
+            Ok(None) => {
                 return (StatusCode::NOT_FOUND, "Video not in any approved channel").into_response()
             }
             Err(e) => {
-                tracing::error!("video_exists: {e}");
+                tracing::error!("get_video: {e}");
                 return (StatusCode::INTERNAL_SERVER_ERROR, "Server error").into_response();
             }
         }
@@ -48,12 +54,12 @@ pub async fn submit_job(
         {
             return (StatusCode::BAD_REQUEST, "Only YouTube URLs are accepted").into_response();
         }
-        url.clone()
+        (url.clone(), None, None)
     } else {
         return (StatusCode::BAD_REQUEST, "Provide either url or youtube_id").into_response();
     };
 
-    match state.db.insert_job(&url) {
+    match state.db.insert_job(&url, prefill_channel.as_deref(), prefill_title.as_deref()) {
         Ok(job) => Json(job).into_response(),
         Err(e) => {
             tracing::error!("insert job: {e}");
