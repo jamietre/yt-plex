@@ -111,7 +111,10 @@ pub async fn list_channel_videos(
         params.filter.as_deref().unwrap_or("new"),
     );
     let show_ignored = params.show_ignored.unwrap_or(false);
-    match state.db.list_videos_for_channel(&id, filter, show_ignored, None, 50, 0) {
+    let search = params.q.as_deref().filter(|s| !s.is_empty());
+    let limit = params.limit.unwrap_or(48).min(200);
+    let offset = params.offset.unwrap_or(0);
+    match state.db.list_videos_for_channel(&id, filter, show_ignored, search, limit, offset) {
         Ok(page) => Json(page).into_response(),
         Err(e) => {
             error!("list_videos_for_channel: {e}");
@@ -124,4 +127,7 @@ pub async fn list_channel_videos(
 pub struct VideoQueryParams {
     pub filter: Option<String>,
     pub show_ignored: Option<bool>,
+    pub q: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
 }
