@@ -121,4 +121,4 @@ docker build -t yt-plex:latest .
 docker compose up -d
 ```
 
-See `docker-compose.yml` for volume mounts: `/config` (config.toml), `/data` (SQLite + thumbnail cache), `/media` (Plex output directory).
+Full setup instructions, config reference, and update workflow: see [`docs/deployment.md`](docs/deployment.md).
