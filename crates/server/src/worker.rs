@@ -96,6 +96,7 @@ async fn tick(
                 title: None,
                 error: None,
                 progress: Some(pct),
+                youtube_id: None,
             });
         }
         stderr_buf.push_str(&line);
