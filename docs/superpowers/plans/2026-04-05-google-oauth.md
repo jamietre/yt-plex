@@ -1,203 +1,101 @@
-# Google OAuth Authentication Implementation Plan
+# Google OAuth Authentication Implementation Plan (Device Flow)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace password-based admin login with Google OAuth, gating access by a configurable list of admin email addresses.
+**Goal:** Replace password-based admin login with Google OAuth device flow (RFC 8628), allowing the app to work on a local network without a public redirect URI.
 
-**Architecture:** The browser is redirected to Google's authorization endpoint; after consent, Google redirects back to `/api/auth/callback` where the server exchanges the code for an access token, fetches the user's email from Google's userinfo endpoint, verifies it against `admin_emails`, and creates a SQLite-backed session as before.
+**Architecture:** User clicks "Sign in with Google" → server requests a device code from Google → frontend shows the user_code and polls the server → server polls Google's token endpoint → on success, fetches email, checks admin list, creates SQLite session.
 
-**Tech Stack:** Rust/Axum, reqwest (already present), urlencoding (new, tiny dep), SvelteKit frontend.
+**Tech Stack:** Rust/Axum, reqwest (already present), urlencoding (already added), SvelteKit frontend.
 
 ---
 
-## File Map
+## Completed Tasks (do not re-implement)
+
+- **Task 1** (`74ba32f`): Config structs — `AuthConfig.admin_emails`, `GoogleOAuthConfig` (still has `redirect_uri` field — Task A below removes it)
+- **Task 2** (`b87094e`): `auth.rs` slimmed to `generate_token` only; `argon2` removed; `urlencoding` added
+- **Task 3** (`dadcea3`): `AppState.oauth_states` added; router updated (still points at standard-flow handlers — Tasks B/D below fix this)
+- **Task 4** (`7d49641`): Standard OAuth routes implemented — to be replaced by device flow routes in Task D
+
+---
+
+## File Map (Remaining Work)
 
 | File | Change |
 |------|--------|
-| `crates/common/src/config.rs` | Replace `AuthConfig.admin_password_hash` with `admin_emails: Vec<String>`; add `GoogleOAuthConfig` struct |
-| `crates/server/Cargo.toml` | Remove `argon2`; add `urlencoding = "2"` |
-| `crates/server/src/auth.rs` | Remove `hash_password`, `verify_password`; keep `generate_token` |
-| `crates/server/src/lib.rs` | Add `oauth_states` field to `AppState`; update router |
-| `crates/server/src/routes/auth.rs` | Remove `login`/`LoginRequest`; add `oauth_login`, `oauth_callback`, `error_page` |
+| `crates/common/src/config.rs` | Remove `redirect_uri` from `GoogleOAuthConfig` |
+| `crates/server/src/lib.rs` | Change `oauth_states` value type to `DeviceCodeEntry`; update router path |
+| `crates/server/src/routes/auth.rs` | Replace standard OAuth handlers with device flow: `device_login`, `device_poll` |
 | `crates/server/src/main.rs` | Remove `HashPassword` subcommand |
-| `web/src/routes/login/+page.svelte` | Replace password form with "Sign in with Google" link |
-| `web/src/lib/api.ts` | Remove `login()` function |
-| `README.md` | Update setup section (no more `hash-password`) |
+| `web/src/routes/login/+page.svelte` | Device flow UI: show user_code, poll server |
+| `web/src/lib/api.ts` | Add `startDeviceLogin()`, `pollDeviceAuth()`, remove `login()` |
+| `README.md` | Update setup (no redirect_uri, device client type, updated config template) |
 
 ---
 
-### Task 1: Update config structs
+### Task A: Remove redirect_uri from config
 
 **Files:**
 - Modify: `crates/common/src/config.rs`
 
-- [ ] **Step 1: Update the config test to reflect the new shape**
+- [ ] **Step 1: Update the test — remove redirect_uri from the TOML fixture**
 
-Replace the existing `parses_valid_config` test in `crates/common/src/config.rs`:
-
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_valid_config() {
-        let toml = r#"
-[server]
-bind = "127.0.0.1:3000"
-
-[auth]
-admin_emails = ["admin@example.com"]
-
+In `crates/common/src/config.rs`, update the `parses_valid_config` test. Change the `[google_oauth]` section from:
+```toml
 [google_oauth]
 client_id = "fake_client_id"
 client_secret = "fake_secret"
 redirect_uri = "http://localhost:3000/api/auth/callback"
-
-[plex]
-url = "http://localhost:32400"
-token = "mytoken"
-library_section_id = "1"
-
-[output]
-base_path = "/mnt/plex"
-path_template = "{channel}/{date} - {title}.{ext}"
-"#;
-        let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.server.bind, "127.0.0.1:3000");
-        assert_eq!(config.auth.admin_emails, vec!["admin@example.com"]);
-        assert_eq!(config.google_oauth.client_id, "fake_client_id");
-        assert_eq!(config.plex.library_section_id, "1");
-    }
-}
 ```
-
-- [ ] **Step 2: Run the test to confirm it fails**
-
-```bash
-cargo test -p yt-plex-common parses_valid_config 2>&1 | tail -20
+to:
+```toml
+[google_oauth]
+client_id = "fake_client_id"
+client_secret = "fake_secret"
 ```
+Remove the `redirect_uri` assertion from the test body.
 
-Expected: compile error — `AuthConfig` still has `admin_password_hash`, `Config` has no `google_oauth`.
-
-- [ ] **Step 3: Replace the structs**
-
-Replace the `AuthConfig` struct and add `GoogleOAuthConfig` in `crates/common/src/config.rs`:
-
-```rust
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuthConfig {
-    pub admin_emails: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GoogleOAuthConfig {
-    pub client_id: String,
-    pub client_secret: String,
-    pub redirect_uri: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Config {
-    pub server: ServerConfig,
-    pub auth: AuthConfig,
-    pub google_oauth: GoogleOAuthConfig,
-    pub plex: PlexConfig,
-    pub output: OutputConfig,
-}
-```
-
-- [ ] **Step 4: Run the test to confirm it passes**
+- [ ] **Step 2: Run test to confirm it fails**
 
 ```bash
 cargo test -p yt-plex-common parses_valid_config 2>&1 | tail -10
 ```
 
-Expected: `test tests::parses_valid_config ... ok`
+Expected: compile error — `GoogleOAuthConfig` still has `redirect_uri`.
+
+- [ ] **Step 3: Remove redirect_uri from GoogleOAuthConfig**
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoogleOAuthConfig {
+    pub client_id: String,
+    pub client_secret: String,
+}
+```
+
+- [ ] **Step 4: Run test to confirm it passes**
+
+```bash
+cargo test -p yt-plex-common 2>&1 | tail -10
+```
+
+Expected: all 3 common tests pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add crates/common/src/config.rs
-git commit -m "feat: replace admin_password_hash with admin_emails and GoogleOAuthConfig"
+git commit -m "feat: remove redirect_uri from GoogleOAuthConfig (device flow)"
 ```
 
 ---
 
-### Task 2: Slim auth.rs and remove argon2
-
-**Files:**
-- Modify: `crates/server/src/auth.rs`
-- Modify: `crates/server/Cargo.toml`
-
-- [ ] **Step 1: Verify the generate_token test still passes before changes**
-
-```bash
-cargo test -p yt-plex-server generate_token 2>&1 | tail -10
-```
-
-Expected: `test auth::tests::generate_token_is_64_hex_chars ... ok`
-
-- [ ] **Step 2: Replace auth.rs, removing hash/verify and their tests**
-
-Write the entire file:
-
-```rust
-use rand::Rng;
-
-pub fn generate_token() -> String {
-    let bytes: [u8; 32] = rand::thread_rng().gen();
-    hex::encode(bytes)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn generate_token_is_64_hex_chars() {
-        let tok = generate_token();
-        assert_eq!(tok.len(), 64);
-        assert!(tok.chars().all(|c| c.is_ascii_hexdigit()));
-    }
-}
-```
-
-- [ ] **Step 3: Remove argon2, add urlencoding in crates/server/Cargo.toml**
-
-Remove this line:
-```
-argon2         = "0.5"
-```
-
-Add this line after `hex`:
-```
-urlencoding    = "2"
-```
-
-- [ ] **Step 4: Confirm generate_token test still passes**
-
-```bash
-cargo test -p yt-plex-server generate_token 2>&1 | tail -10
-```
-
-Expected: `test auth::tests::generate_token_is_64_hex_chars ... ok`
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add crates/server/src/auth.rs crates/server/Cargo.toml
-git commit -m "chore: remove argon2 password auth, add urlencoding dep"
-```
-
----
-
-### Task 3: Add oauth_states to AppState and update router
+### Task B: Update AppState and router for device flow
 
 **Files:**
 - Modify: `crates/server/src/lib.rs`
 
-- [ ] **Step 1: Replace lib.rs with the updated AppState and router**
+- [ ] **Step 1: Replace lib.rs**
 
 Write the entire file:
 
@@ -223,13 +121,20 @@ use yt_plex_common::config::Config;
 
 use crate::{db::Db, ws::WsHub};
 
+pub struct DeviceCodeEntry {
+    pub google_device_code: String,
+    pub expires_at: Instant,
+    pub interval: u64,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Db>,
     pub config: Arc<std::sync::RwLock<Config>>,
     pub config_path: String,
     pub ws_hub: WsHub,
-    pub oauth_states: Arc<Mutex<HashMap<String, Instant>>>,
+    pub oauth_states: Arc<Mutex<HashMap<String, DeviceCodeEntry>>>,
+    pub http_client: reqwest::Client,
 }
 
 pub async fn create_app_state(config: Config, config_path: String) -> Result<AppState> {
@@ -255,13 +160,14 @@ pub async fn create_app_state(config: Config, config_path: String) -> Result<App
         config_path,
         ws_hub,
         oauth_states: Arc::new(Mutex::new(HashMap::new())),
+        http_client: reqwest::Client::new(),
     })
 }
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
-        .route("/api/auth/login", get(routes::auth::oauth_login))
-        .route("/api/auth/callback", get(routes::auth::oauth_callback))
+        .route("/api/auth/login", get(routes::auth::device_login))
+        .route("/api/auth/poll", get(routes::auth::device_poll))
         .route("/api/logout", post(routes::auth::logout))
         .route("/api/jobs", post(routes::jobs::submit_job))
         .route("/api/jobs", get(routes::jobs::list_jobs))
@@ -274,294 +180,31 @@ pub fn build_router(state: AppState) -> Router {
 }
 ```
 
-- [ ] **Step 2: Check it compiles (routes/auth.rs still has old code — expect a compile error there)**
+- [ ] **Step 2: Check compilation (expect errors about device_login/device_poll and hash_password)**
 
 ```bash
-cargo build -p yt-plex-server 2>&1 | grep "^error" | head -20
+cargo build -p yt-plex-server 2>&1 | grep "^error" | head -10
 ```
 
-Expected: errors about `oauth_login`/`oauth_callback` not found — that's fine, we implement them next.
+Expected errors (all fixed in subsequent tasks):
+- `device_login`/`device_poll` not found in `routes::auth`
+- `hash_password` in `main.rs`
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add crates/server/src/lib.rs
-git commit -m "feat: add oauth_states to AppState, update router to OAuth routes"
+git commit -m "feat: update AppState for device flow (DeviceCodeEntry, router paths)"
 ```
 
 ---
 
-### Task 4: Implement OAuth routes
-
-**Files:**
-- Modify: `crates/server/src/routes/auth.rs`
-
-- [ ] **Step 1: Replace routes/auth.rs entirely**
-
-```rust
-use axum::{
-    body::Body,
-    extract::{FromRequestParts, Query, State},
-    http::{header, request::Parts, Response, StatusCode},
-    response::{IntoResponse, Redirect},
-};
-use serde::Deserialize;
-use std::time::{Duration, Instant};
-use tracing::warn;
-
-use crate::{auth as auth_util, AppState};
-
-const STATE_TTL: Duration = Duration::from_secs(600);
-
-/// Extracts the raw session token string from the Cookie header (or None).
-pub struct SessionToken(pub Option<String>);
-
-impl<S> FromRequestParts<S> for SessionToken
-where
-    S: Send + Sync,
-{
-    type Rejection = std::convert::Infallible;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let token = parts
-            .headers
-            .get(header::COOKIE)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|cookies| {
-                cookies
-                    .split(';')
-                    .map(|c| c.trim())
-                    .find(|c| c.starts_with("session="))
-                    .map(|c| c["session=".len()..].to_string())
-            });
-        Ok(SessionToken(token))
-    }
-}
-
-pub async fn oauth_login(State(state): State<AppState>) -> impl IntoResponse {
-    let oauth_state = auth_util::generate_token();
-    {
-        let mut states = state.oauth_states.lock().unwrap();
-        states.insert(oauth_state.clone(), Instant::now());
-    }
-    let cfg = state.config.read().unwrap();
-    let url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth\
-         ?response_type=code\
-         &client_id={}\
-         &redirect_uri={}\
-         &scope=email\
-         &state={}",
-        urlencoding::encode(&cfg.google_oauth.client_id),
-        urlencoding::encode(&cfg.google_oauth.redirect_uri),
-        oauth_state, // hex string, no encoding needed
-    );
-    Redirect::to(&url)
-}
-
-#[derive(Deserialize)]
-pub struct CallbackParams {
-    pub code: Option<String>,
-    pub state: Option<String>,
-    pub error: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct TokenResponse {
-    access_token: String,
-}
-
-#[derive(Deserialize)]
-struct UserInfo {
-    email: String,
-}
-
-pub async fn oauth_callback(
-    State(state): State<AppState>,
-    Query(params): Query<CallbackParams>,
-) -> axum::response::Response {
-    // Prune expired states on every callback
-    {
-        let mut states = state.oauth_states.lock().unwrap();
-        states.retain(|_, t| t.elapsed() < STATE_TTL);
-    }
-
-    if let Some(err) = params.error {
-        warn!("OAuth error from Google: {err}");
-        return error_page("Google sign-in was cancelled or failed.");
-    }
-
-    let code = match params.code {
-        Some(c) => c,
-        None => return error_page("Missing code parameter."),
-    };
-    let incoming_state = match params.state {
-        Some(s) => s,
-        None => return error_page("Missing state parameter."),
-    };
-
-    // Validate and consume state (prevents CSRF)
-    let valid = {
-        let mut states = state.oauth_states.lock().unwrap();
-        states
-            .remove(&incoming_state)
-            .map(|t| t.elapsed() < STATE_TTL)
-            .unwrap_or(false)
-    };
-    if !valid {
-        return error_page("Invalid or expired state. Please try again.");
-    }
-
-    let (client_id, client_secret, redirect_uri) = {
-        let cfg = state.config.read().unwrap();
-        (
-            cfg.google_oauth.client_id.clone(),
-            cfg.google_oauth.client_secret.clone(),
-            cfg.google_oauth.redirect_uri.clone(),
-        )
-    };
-
-    // Exchange code for access token
-    let http = reqwest::Client::new();
-    let token_resp = match http
-        .post("https://oauth2.googleapis.com/token")
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("code", code.as_str()),
-            ("client_id", client_id.as_str()),
-            ("client_secret", client_secret.as_str()),
-            ("redirect_uri", redirect_uri.as_str()),
-        ])
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("token exchange request failed: {e}");
-            return error_page("Failed to contact Google. Please try again.");
-        }
-    };
-
-    let token_data: TokenResponse = match token_resp.json().await {
-        Ok(d) => d,
-        Err(e) => {
-            warn!("token exchange parse failed: {e}");
-            return error_page("Unexpected response from Google. Please try again.");
-        }
-    };
-
-    // Fetch user's email from userinfo endpoint
-    let userinfo_resp = match http
-        .get("https://www.googleapis.com/oauth2/v2/userinfo")
-        .bearer_auth(&token_data.access_token)
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("userinfo request failed: {e}");
-            return error_page("Failed to fetch user info from Google.");
-        }
-    };
-
-    let userinfo: UserInfo = match userinfo_resp.json().await {
-        Ok(d) => d,
-        Err(e) => {
-            warn!("userinfo parse failed: {e}");
-            return error_page("Unexpected user info response from Google.");
-        }
-    };
-
-    // Check email against configured admin list
-    let is_admin = {
-        let cfg = state.config.read().unwrap();
-        cfg.auth
-            .admin_emails
-            .iter()
-            .any(|e| e.eq_ignore_ascii_case(&userinfo.email))
-    };
-
-    if !is_admin {
-        warn!("OAuth login rejected for {}", userinfo.email);
-        return (
-            StatusCode::FORBIDDEN,
-            axum::response::Html(
-                "<h1>Access denied</h1>\
-                 <p>Your account is not authorised to access this application.</p>\
-                 <p><a href=\"/api/auth/login\">Try a different account</a></p>",
-            ),
-        )
-            .into_response();
-    }
-
-    // Create session and set cookie
-    let token = auth_util::generate_token();
-    if let Err(e) = state.db.insert_session(&token) {
-        warn!("insert session error: {e}");
-        return error_page("Server error creating session.");
-    }
-
-    let cookie = format!(
-        "session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800",
-        token
-    );
-    Response::builder()
-        .status(StatusCode::SEE_OTHER)
-        .header(header::LOCATION, "/")
-        .header(header::SET_COOKIE, cookie)
-        .body(Body::empty())
-        .unwrap()
-}
-
-pub async fn logout(State(state): State<AppState>, SessionToken(token): SessionToken) -> impl IntoResponse {
-    if let Some(t) = token {
-        let _ = state.db.delete_session(&t);
-    }
-    let clear = "session=; Path=/; HttpOnly; Max-Age=0";
-    (StatusCode::OK, [(header::SET_COOKIE, clear)], "OK")
-}
-
-fn error_page(msg: &str) -> axum::response::Response {
-    let html = format!(
-        "<h1>Sign-in failed</h1>\
-         <p>{msg}</p>\
-         <p><a href=\"/api/auth/login\">Try again</a></p>"
-    );
-    (StatusCode::BAD_REQUEST, axum::response::Html(html)).into_response()
-}
-```
-
-- [ ] **Step 2: Build and fix any compile errors**
-
-```bash
-cargo build -p yt-plex-server 2>&1 | grep "^error" | head -30
-```
-
-Expected: clean build (0 errors). If there are errors, fix them before proceeding.
-
-- [ ] **Step 3: Run all tests**
-
-```bash
-cargo test -p yt-plex-server 2>&1 | tail -20
-```
-
-Expected: all existing db tests still pass.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add crates/server/src/routes/auth.rs
-git commit -m "feat: implement Google OAuth login and callback routes"
-```
-
----
-
-### Task 5: Remove hash-password CLI subcommand
+### Task C: Remove hash-password CLI subcommand
 
 **Files:**
 - Modify: `crates/server/src/main.rs`
 
-- [ ] **Step 1: Replace main.rs, removing the HashPassword subcommand**
+- [ ] **Step 1: Replace main.rs**
 
 ```rust
 use anyhow::{Context, Result};
@@ -618,14 +261,13 @@ async fn main() -> Result<()> {
 }
 ```
 
-- [ ] **Step 2: Build and run all tests**
+- [ ] **Step 2: Build**
 
 ```bash
 cargo build -p yt-plex-server 2>&1 | grep "^error" | head -10
-cargo test 2>&1 | tail -20
 ```
 
-Expected: clean build, all tests pass.
+Expected: errors only about `device_login`/`device_poll` not found — `main.rs` errors should be gone.
 
 - [ ] **Step 3: Commit**
 
@@ -636,25 +278,528 @@ git commit -m "chore: remove hash-password CLI subcommand"
 
 ---
 
-### Task 6: Update frontend login page
+### Task D: Implement device flow routes
+
+**Files:**
+- Modify: `crates/server/src/routes/auth.rs`
+
+- [ ] **Step 1: Write the entire file**
+
+```rust
+use axum::{
+    extract::{FromRequestParts, Query, State},
+    http::{header, request::Parts, StatusCode},
+    response::{IntoResponse, Json},
+};
+use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
+use tracing::warn;
+
+use crate::{auth as auth_util, AppState, DeviceCodeEntry};
+
+/// Extracts the raw session token string from the Cookie header (or None).
+pub struct SessionToken(pub Option<String>);
+
+impl<S> FromRequestParts<S> for SessionToken
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let token = parts
+            .headers
+            .get(header::COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|cookies| {
+                cookies
+                    .split(';')
+                    .map(|c| c.trim())
+                    .find(|c| c.starts_with("session="))
+                    .map(|c| c["session=".len()..].to_string())
+            });
+        Ok(SessionToken(token))
+    }
+}
+
+// ── Device code initiation ────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct GoogleDeviceCodeResponse {
+    device_code: String,
+    user_code: String,
+    verification_url: String,
+    expires_in: u64,
+    interval: u64,
+}
+
+#[derive(Serialize)]
+pub struct DeviceLoginResponse {
+    pub poll_token: String,
+    pub user_code: String,
+    pub verification_url: String,
+    pub expires_in: u64,
+    pub interval: u64,
+}
+
+pub async fn device_login(State(state): State<AppState>) -> axum::response::Response {
+    let client_id = state.config.read().unwrap().google_oauth.client_id.clone();
+
+    let resp = match state
+        .http_client
+        .post("https://oauth2.googleapis.com/device/code")
+        .form(&[("client_id", client_id.as_str()), ("scope", "email")])
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("device code request failed: {e}");
+            return (StatusCode::BAD_GATEWAY, "Failed to contact Google.").into_response();
+        }
+    };
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        warn!("device code request returned HTTP {status}: {body}");
+        return (StatusCode::BAD_GATEWAY, "Failed to start sign-in.").into_response();
+    }
+
+    let google_resp: GoogleDeviceCodeResponse = match resp.json().await {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("device code parse failed: {e}");
+            return (StatusCode::BAD_GATEWAY, "Unexpected response from Google.").into_response();
+        }
+    };
+
+    let poll_token = auth_util::generate_token();
+    {
+        let mut states = state.oauth_states.lock().unwrap();
+        states.insert(
+            poll_token.clone(),
+            DeviceCodeEntry {
+                google_device_code: google_resp.device_code,
+                expires_at: Instant::now() + Duration::from_secs(google_resp.expires_in),
+                interval: google_resp.interval,
+            },
+        );
+    }
+
+    Json(DeviceLoginResponse {
+        poll_token,
+        user_code: google_resp.user_code,
+        verification_url: google_resp.verification_url,
+        expires_in: google_resp.expires_in,
+        interval: google_resp.interval,
+    })
+    .into_response()
+}
+
+// ── Device code polling ───────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct PollParams {
+    pub token: String,
+}
+
+#[derive(Serialize)]
+pub struct PollResponse {
+    pub status: &'static str, // "pending" | "done" | "denied" | "expired" | "error"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+// Google token endpoint response (device flow)
+#[derive(Deserialize)]
+struct GoogleTokenResponse {
+    access_token: Option<String>,
+    error: Option<String>,
+    interval: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct UserInfo {
+    email: String,
+}
+
+pub async fn device_poll(
+    State(state): State<AppState>,
+    Query(params): Query<PollParams>,
+) -> axum::response::Response {
+    // Prune expired entries
+    {
+        let mut states = state.oauth_states.lock().unwrap();
+        states.retain(|_, e| e.expires_at > Instant::now());
+    }
+
+    let (google_device_code, client_id, client_secret) = {
+        let states = state.oauth_states.lock().unwrap();
+        match states.get(&params.token) {
+            None => {
+                return Json(PollResponse {
+                    status: "expired",
+                    interval: None,
+                    message: None,
+                })
+                .into_response();
+            }
+            Some(entry) => {
+                let cfg = state.config.read().unwrap();
+                (
+                    entry.google_device_code.clone(),
+                    cfg.google_oauth.client_id.clone(),
+                    cfg.google_oauth.client_secret.clone(),
+                )
+            }
+        }
+    };
+
+    // Poll Google's token endpoint
+    let token_resp = match state
+        .http_client
+        .post("https://oauth2.googleapis.com/token")
+        .form(&[
+            ("client_id", client_id.as_str()),
+            ("client_secret", client_secret.as_str()),
+            ("device_code", google_device_code.as_str()),
+            (
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:device_code",
+            ),
+        ])
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("token poll request failed: {e}");
+            return Json(PollResponse {
+                status: "error",
+                interval: None,
+                message: Some("Failed to contact Google.".into()),
+            })
+            .into_response();
+        }
+    };
+
+    let google_token: GoogleTokenResponse = match token_resp.json().await {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("token poll parse failed: {e}");
+            return Json(PollResponse {
+                status: "error",
+                interval: None,
+                message: Some("Unexpected response from Google.".into()),
+            })
+            .into_response();
+        }
+    };
+
+    match google_token.error.as_deref() {
+        Some("authorization_pending") => {
+            return Json(PollResponse {
+                status: "pending",
+                interval: None,
+                message: None,
+            })
+            .into_response();
+        }
+        Some("slow_down") => {
+            return Json(PollResponse {
+                status: "pending",
+                interval: google_token.interval,
+                message: None,
+            })
+            .into_response();
+        }
+        Some("access_denied") => {
+            state.oauth_states.lock().unwrap().remove(&params.token);
+            return Json(PollResponse {
+                status: "denied",
+                interval: None,
+                message: Some("Access was denied.".into()),
+            })
+            .into_response();
+        }
+        Some(other) => {
+            warn!("Google token error: {other}");
+            state.oauth_states.lock().unwrap().remove(&params.token);
+            return Json(PollResponse {
+                status: "error",
+                interval: None,
+                message: Some(format!("Google error: {other}")),
+            })
+            .into_response();
+        }
+        None => {} // fall through to access_token handling
+    }
+
+    let access_token = match google_token.access_token {
+        Some(t) => t,
+        None => {
+            warn!("token poll returned neither access_token nor error");
+            return Json(PollResponse {
+                status: "error",
+                interval: None,
+                message: Some("Unexpected response from Google.".into()),
+            })
+            .into_response();
+        }
+    };
+
+    // Fetch user's email
+    let userinfo_resp = match state
+        .http_client
+        .get("https://www.googleapis.com/oauth2/v2/userinfo")
+        .bearer_auth(&access_token)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("userinfo request failed: {e}");
+            return Json(PollResponse {
+                status: "error",
+                interval: None,
+                message: Some("Failed to fetch user info from Google.".into()),
+            })
+            .into_response();
+        }
+    };
+
+    if !userinfo_resp.status().is_success() {
+        let status = userinfo_resp.status();
+        let body = userinfo_resp.text().await.unwrap_or_default();
+        warn!("userinfo returned HTTP {status}: {body}");
+        return Json(PollResponse {
+            status: "error",
+            interval: None,
+            message: Some("Failed to fetch user info.".into()),
+        })
+        .into_response();
+    }
+
+    let userinfo: UserInfo = match userinfo_resp.json().await {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("userinfo parse failed: {e}");
+            return Json(PollResponse {
+                status: "error",
+                interval: None,
+                message: Some("Unexpected user info response.".into()),
+            })
+            .into_response();
+        }
+    };
+
+    // Check against admin list
+    let is_admin = {
+        let cfg = state.config.read().unwrap();
+        cfg.auth
+            .admin_emails
+            .iter()
+            .any(|e| e.eq_ignore_ascii_case(&userinfo.email))
+    };
+
+    if !is_admin {
+        warn!("device flow login rejected for {}", userinfo.email);
+        state.oauth_states.lock().unwrap().remove(&params.token);
+        return Json(PollResponse {
+            status: "denied",
+            interval: None,
+            message: Some("Your account is not authorised.".into()),
+        })
+        .into_response();
+    }
+
+    // Create session
+    let session_token = auth_util::generate_token();
+    if let Err(e) = state.db.insert_session(&session_token) {
+        warn!("insert session error: {e}");
+        return Json(PollResponse {
+            status: "error",
+            interval: None,
+            message: Some("Server error creating session.".into()),
+        })
+        .into_response();
+    }
+
+    // Clean up state
+    state.oauth_states.lock().unwrap().remove(&params.token);
+
+    let cookie = format!(
+        "session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800",
+        session_token
+    );
+    (
+        StatusCode::OK,
+        [(header::SET_COOKIE, cookie)],
+        Json(PollResponse {
+            status: "done",
+            interval: None,
+            message: None,
+        }),
+    )
+        .into_response()
+}
+
+// ── Logout ────────────────────────────────────────────────────────────────────
+
+pub async fn logout(
+    State(state): State<AppState>,
+    SessionToken(token): SessionToken,
+) -> impl IntoResponse {
+    if let Some(t) = token {
+        let _ = state.db.delete_session(&t);
+    }
+    let clear = "session=; Path=/; HttpOnly; Max-Age=0";
+    (StatusCode::OK, [(header::SET_COOKIE, clear)], "OK")
+}
+```
+
+- [ ] **Step 2: Build and fix any compile errors**
+
+```bash
+cargo build -p yt-plex-server 2>&1 | grep "^error" | head -20
+```
+
+Expected: clean build (0 errors).
+
+- [ ] **Step 3: Run all tests**
+
+```bash
+cargo test -p yt-plex-server 2>&1 | tail -20
+```
+
+Expected: all existing tests pass.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add crates/server/src/routes/auth.rs
+git commit -m "feat: implement Google device flow auth (RFC 8628)"
+```
+
+---
+
+### Task E: Update frontend login page
 
 **Files:**
 - Modify: `web/src/routes/login/+page.svelte`
 - Modify: `web/src/lib/api.ts`
 
-- [ ] **Step 1: Replace login page with a "Sign in with Google" link**
+- [ ] **Step 1: Add API functions to api.ts**
 
-Write the entire file at `web/src/routes/login/+page.svelte`:
+Read `web/src/lib/api.ts` first. Add these two functions (remove the old `login()` function if present):
+
+```typescript
+export interface DeviceLoginResponse {
+  poll_token: string;
+  user_code: string;
+  verification_url: string;
+  expires_in: number;
+  interval: number;
+}
+
+export interface PollResponse {
+  status: 'pending' | 'done' | 'denied' | 'expired' | 'error';
+  interval?: number;
+  message?: string;
+}
+
+export async function startDeviceLogin(): Promise<DeviceLoginResponse> {
+  const res = await fetch('/api/auth/login');
+  if (!res.ok) throw new Error(`${res.status}`);
+  return res.json();
+}
+
+export async function pollDeviceAuth(token: string): Promise<PollResponse> {
+  const res = await fetch(`/api/auth/poll?token=${encodeURIComponent(token)}`);
+  if (!res.ok) throw new Error(`${res.status}`);
+  return res.json();
+}
+```
+
+- [ ] **Step 2: Replace the login page**
+
+Write the entire file `web/src/routes/login/+page.svelte`:
 
 ```svelte
+<script lang="ts">
+    import { startDeviceLogin, pollDeviceAuth, type DeviceLoginResponse } from '$lib/api';
+
+    type Phase = 'idle' | 'waiting' | 'done' | 'error';
+
+    let phase = $state<Phase>('idle');
+    let deviceInfo = $state<DeviceLoginResponse | null>(null);
+    let errorMsg = $state('');
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+    async function startLogin() {
+        phase = 'idle';
+        errorMsg = '';
+        deviceInfo = null;
+        try {
+            deviceInfo = await startDeviceLogin();
+            phase = 'waiting';
+            schedulePoll(deviceInfo.interval);
+        } catch {
+            phase = 'error';
+            errorMsg = 'Failed to start sign-in. Please try again.';
+        }
+    }
+
+    function schedulePoll(intervalSecs: number) {
+        pollTimer = setTimeout(doPoll, intervalSecs * 1000);
+    }
+
+    async function doPoll() {
+        if (!deviceInfo) return;
+        try {
+            const result = await pollDeviceAuth(deviceInfo.poll_token);
+            if (result.status === 'pending') {
+                schedulePoll(result.interval ?? deviceInfo.interval);
+            } else if (result.status === 'done') {
+                phase = 'done';
+                window.location.href = '/';
+            } else if (result.status === 'expired') {
+                phase = 'error';
+                errorMsg = 'Sign-in timed out. Please try again.';
+            } else {
+                phase = 'error';
+                errorMsg = result.message ?? 'Sign-in failed. Please try again.';
+            }
+        } catch {
+            schedulePoll(deviceInfo.interval);
+        }
+    }
+</script>
+
 <main>
     <h2>Sign in</h2>
-    <a href="/api/auth/login" class="google-btn">Sign in with Google</a>
+
+    {#if phase === 'idle' || phase === 'error'}
+        {#if errorMsg}<p class="error">{errorMsg}</p>{/if}
+        <button onclick={startLogin}>Sign in with Google</button>
+
+    {:else if phase === 'waiting' && deviceInfo}
+        <p>Open the following URL and enter the code below:</p>
+        <p><a href={deviceInfo.verification_url} target="_blank" rel="noreferrer">{deviceInfo.verification_url}</a></p>
+        <p class="code">{deviceInfo.user_code}</p>
+        <p class="hint">Waiting for authorisation…</p>
+
+    {:else if phase === 'done'}
+        <p>Signed in! Redirecting…</p>
+    {/if}
 </main>
 
 <style>
     main {
-        max-width: 360px;
+        max-width: 400px;
         margin: 6rem auto;
         padding: 2rem;
         font-family: sans-serif;
@@ -662,26 +807,32 @@ Write the entire file at `web/src/routes/login/+page.svelte`:
         border: 1px solid #333;
         border-radius: 8px;
         background: #1a1a1a;
+        color: #fff;
     }
-    h2 { margin-bottom: 1.5rem; color: #fff; }
-    .google-btn {
-        display: inline-block;
+    h2 { margin-bottom: 1.5rem; }
+    button {
         padding: 0.6rem 1.4rem;
         background: #fff;
         color: #333;
+        border: none;
         border-radius: 4px;
-        text-decoration: none;
+        cursor: pointer;
         font-weight: 500;
+        font-size: 1rem;
     }
-    .google-btn:hover { background: #e8e8e8; }
+    button:hover { background: #e8e8e8; }
+    .code {
+        font-size: 2rem;
+        font-weight: bold;
+        letter-spacing: 0.2em;
+        margin: 1rem 0;
+        font-family: monospace;
+    }
+    .hint { color: #888; font-size: 0.9rem; }
+    .error { color: #f66; }
+    a { color: #4af; }
 </style>
 ```
-
-- [ ] **Step 2: Remove the login() function from api.ts**
-
-Read `web/src/lib/api.ts` first, then remove the `login()` export and the `LoginRequest`/`LoginResponse` types if present. Keep `logout()`, `listJobs()`, `submitJob()`, `getSettings()`, `updateSettings()`.
-
-The login page no longer calls the API — it navigates directly to `/api/auth/login`.
 
 - [ ] **Step 3: Build the frontend**
 
@@ -689,28 +840,27 @@ The login page no longer calls the API — it navigates directly to `/api/auth/l
 cd web && pnpm build 2>&1 | tail -10
 ```
 
-Expected: `✔ done` with no errors.
+Expected: `✔ done`
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add web/src/routes/login/+page.svelte web/src/lib/api.ts web/build/
-git commit -m "feat: replace password login form with Sign in with Google"
+git commit -m "feat: device flow login UI — show user code, poll for completion"
 ```
 
 ---
 
-### Task 7: Update README
+### Task F: Update README
 
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 1: Update the setup section**
+- [ ] **Step 1: Update the config template and instructions**
 
 In `README.md`:
 
-1. Remove the "Generate a password hash" step and the `hash-password` command example.
-2. Replace the `[auth]` section in the config template with:
+1. Update the `[auth]` + `[google_oauth]` config example to:
    ```toml
    [auth]
    admin_emails = ["you@gmail.com"]
@@ -718,21 +868,26 @@ In `README.md`:
    [google_oauth]
    client_id = "your-client-id.apps.googleusercontent.com"
    client_secret = "your-client-secret"
-   redirect_uri = "http://yourserver:3000/api/auth/callback"
    ```
-3. Add a note explaining how to create a Google OAuth app:
-   > **Creating Google OAuth credentials:** Go to [console.cloud.google.com](https://console.cloud.google.com) → APIs & Services → Credentials → Create OAuth 2.0 Client ID (type: Web application). Add your `redirect_uri` as an Authorised redirect URI.
+
+2. Replace any instructions about `hash-password`, `redirect_uri`, or "Web application" OAuth with:
+   > **Creating Google OAuth credentials:** Go to [console.cloud.google.com](https://console.cloud.google.com) → APIs & Services → Credentials → Create OAuth 2.0 Client ID. Choose type **"TVs and Limited Input devices"**. No redirect URIs are needed.
+
+3. Remove any remaining reference to the `hash-password` command.
+
+4. Update the Usage section to describe the device flow login:
+   > Log in by clicking "Sign in with Google", then visit the displayed URL on any device and enter the shown code.
 
 - [ ] **Step 2: Commit**
 
 ```bash
 git add README.md
-git commit -m "docs: update setup instructions for Google OAuth"
+git commit -m "docs: update setup for device flow OAuth"
 ```
 
 ---
 
-### Task 8: Final verification
+### Task G: Final verification
 
 - [ ] **Step 1: Run the full test suite**
 
@@ -742,7 +897,7 @@ cargo test 2>&1 | tail -20
 
 Expected: all tests pass (≥15 passing, 0 failing).
 
-- [ ] **Step 2: Do a release build to catch any lingering issues**
+- [ ] **Step 2: Release build**
 
 ```bash
 cargo build --release -p yt-plex-server 2>&1 | grep "^error" | head -10
@@ -750,8 +905,16 @@ cargo build --release -p yt-plex-server 2>&1 | grep "^error" | head -10
 
 Expected: clean build.
 
-- [ ] **Step 3: Push**
+- [ ] **Step 3: Frontend build**
 
 ```bash
-git push
+cd web && pnpm build 2>&1 | tail -5
+```
+
+Expected: `✔ done`
+
+- [ ] **Step 4: Push**
+
+```bash
+git push -u origin feat/google-oauth
 ```
