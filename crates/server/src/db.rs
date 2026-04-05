@@ -3,7 +3,7 @@ use chrono::Utc;
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
-use yt_plex_common::models::{Job, JobStatus};
+use yt_plex_common::models::{Channel, Job, JobStatus};
 
 #[derive(Clone)]
 pub struct Db {
@@ -124,6 +124,63 @@ impl Db {
         conn.execute(
             "DELETE FROM sessions WHERE token=?1",
             rusqlite::params![token],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_channel(&self, url: &str, name: &str) -> Result<Channel> {
+        let id = Uuid::new_v4().to_string();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO channels (id, youtube_channel_url, name) VALUES (?1, ?2, ?3)",
+            rusqlite::params![id, url, name],
+        )?;
+        Ok(Channel { id, youtube_channel_url: url.to_owned(), name: name.to_owned(), last_synced_at: None })
+    }
+
+    pub fn list_channels(&self) -> Result<Vec<Channel>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, youtube_channel_url, name, last_synced_at FROM channels ORDER BY name ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(Channel {
+                id: row.get(0)?,
+                youtube_channel_url: row.get(1)?,
+                name: row.get(2)?,
+                last_synced_at: row.get(3)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn get_channel(&self, id: &str) -> Result<Option<Channel>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, youtube_channel_url, name, last_synced_at FROM channels WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
+            Ok(Channel {
+                id: row.get(0)?,
+                youtube_channel_url: row.get(1)?,
+                name: row.get(2)?,
+                last_synced_at: row.get(3)?,
+            })
+        })?;
+        rows.next().transpose().map_err(Into::into)
+    }
+
+    pub fn delete_channel(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM channels WHERE id = ?1", rusqlite::params![id])?;
+        Ok(())
+    }
+
+    pub fn set_channel_synced(&self, id: &str, synced_at: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE channels SET last_synced_at = ?1 WHERE id = ?2",
+            rusqlite::params![synced_at, id],
         )?;
         Ok(())
     }
@@ -296,5 +353,40 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn insert_and_list_channels() {
+        let db = test_db();
+        let ch = db.insert_channel("https://youtube.com/@Veritasium", "Veritasium").unwrap();
+        assert_eq!(ch.name, "Veritasium");
+        assert_eq!(ch.youtube_channel_url, "https://youtube.com/@Veritasium");
+        assert!(ch.last_synced_at.is_none());
+        let list = db.list_channels().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, ch.id);
+    }
+
+    #[test]
+    fn get_channel_returns_none_for_missing() {
+        let db = test_db();
+        assert!(db.get_channel("nonexistent").unwrap().is_none());
+    }
+
+    #[test]
+    fn delete_channel_removes_it() {
+        let db = test_db();
+        let ch = db.insert_channel("https://youtube.com/@LTT", "LTT").unwrap();
+        db.delete_channel(&ch.id).unwrap();
+        assert_eq!(db.list_channels().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn set_channel_synced_updates_timestamp() {
+        let db = test_db();
+        let ch = db.insert_channel("https://youtube.com/@test", "Test").unwrap();
+        db.set_channel_synced(&ch.id, "2026-04-05T12:00:00Z").unwrap();
+        let updated = db.get_channel(&ch.id).unwrap().unwrap();
+        assert_eq!(updated.last_synced_at.as_deref(), Some("2026-04-05T12:00:00Z"));
     }
 }
