@@ -58,6 +58,8 @@ pub struct WsMessage {
     pub channel_name: Option<String>,
     pub title: Option<String>,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<f32>,
 }
 
 impl WsMessage {
@@ -68,6 +70,7 @@ impl WsMessage {
             channel_name: job.channel_name.clone(),
             title: job.title.clone(),
             error: job.error.clone(),
+            progress: None,
         }
     }
 }
@@ -94,8 +97,22 @@ mod tests {
             channel_name: Some("Chan".into()),
             title: Some("Vid".into()),
             error: None,
+            progress: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"status\":\"done\""));
+        // progress: None should be omitted from JSON (skip_serializing_if)
+        assert!(!json.contains("progress"));
+
+        let msg_with_progress = WsMessage {
+            job_id: "abc".into(),
+            status: JobStatus::Downloading,
+            channel_name: None,
+            title: None,
+            error: None,
+            progress: Some(42.5),
+        };
+        let json2 = serde_json::to_string(&msg_with_progress).unwrap();
+        assert!(json2.contains("\"progress\":42.5"));
     }
 }
