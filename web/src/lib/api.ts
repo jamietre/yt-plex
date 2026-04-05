@@ -112,6 +112,12 @@ export async function listChannels(): Promise<Channel[]> {
     return res.json();
 }
 
+export async function listAllChannels(): Promise<Channel[]> {
+    const res = await fetch('/api/channels?all=true');
+    if (!res.ok) throw new Error(`listAllChannels failed: ${res.status}`);
+    return res.json();
+}
+
 export async function addChannel(url: string, name: string): Promise<Channel> {
     const res = await fetch('/api/channels', {
         method: 'POST',
@@ -165,6 +171,75 @@ export async function getVideo(youtubeId: string): Promise<Video> {
     const res = await fetch(`/api/videos/${youtubeId}`);
     if (!res.ok) throw new Error(`getVideo failed: ${res.status}`);
     return res.json();
+}
+
+export interface Profile {
+    id: number;
+    name: string;
+    linked_email: string | null;
+    is_admin_profile: boolean;
+    created_at: string;
+}
+
+export async function listProfiles(): Promise<Profile[]> {
+    const res = await fetch('/api/profiles');
+    if (!res.ok) throw new Error(`listProfiles failed: ${res.status}`);
+    return res.json();
+}
+
+export async function createProfile(name: string): Promise<Profile> {
+    const res = await fetch('/api/profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+    });
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `createProfile failed: ${res.status}`);
+    }
+    return res.json();
+}
+
+export async function deleteProfile(id: number): Promise<void> {
+    const res = await fetch(`/api/profiles/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`deleteProfile failed: ${res.status}`);
+}
+
+/** Returns the current profile, or null if none is selected. */
+export async function getProfileSession(): Promise<Profile | null> {
+    const res = await fetch('/api/profile-session');
+    if (res.status === 204) return null;
+    if (!res.ok) return null;
+    return res.json();
+}
+
+export async function setProfileSession(profileId: number): Promise<void> {
+    const res = await fetch('/api/profile-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile_id: profileId }),
+    });
+    if (!res.ok) throw new Error(`setProfileSession failed: ${res.status}`);
+}
+
+export async function clearProfileSession(): Promise<void> {
+    await fetch('/api/profile-session', { method: 'DELETE' });
+}
+
+export async function listProfileChannelIds(profileId: number): Promise<string[]> {
+    const res = await fetch(`/api/profiles/${profileId}/channels`);
+    if (!res.ok) throw new Error(`listProfileChannelIds failed: ${res.status}`);
+    return res.json();
+}
+
+export async function subscribeChannel(profileId: number, channelId: string): Promise<void> {
+    const res = await fetch(`/api/profiles/${profileId}/channels/${channelId}`, { method: 'PUT' });
+    if (!res.ok) throw new Error(`subscribeChannel failed: ${res.status}`);
+}
+
+export async function unsubscribeChannel(profileId: number, channelId: string): Promise<void> {
+    const res = await fetch(`/api/profiles/${profileId}/channels/${channelId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`unsubscribeChannel failed: ${res.status}`);
 }
 
 export async function submitJobByYoutubeId(youtubeId: string): Promise<Job> {

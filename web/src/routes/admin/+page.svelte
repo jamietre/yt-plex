@@ -3,7 +3,8 @@
     import {
         getSettings, updateSettings, type Settings,
         listChannels, addChannel, deleteChannel, syncChannel,
-        submitJob, type Channel
+        submitJob, listProfiles, createProfile, deleteProfile,
+        type Channel, type Profile,
     } from '$lib/api';
 
     // Auth guard
@@ -98,6 +99,38 @@
         }, 3000);
     }
 
+    // Profiles
+    let profiles = $state<Profile[]>([]);
+    let newProfileName = $state('');
+    let profileError = $state('');
+    let addingProfile = $state(false);
+
+    onMount(async () => {
+        try { profiles = await listProfiles(); } catch { /* ignore */ }
+    });
+
+    async function handleCreateProfile() {
+        if (!newProfileName.trim()) return;
+        addingProfile = true; profileError = '';
+        try {
+            const p = await createProfile(newProfileName.trim());
+            profiles = [...profiles, p];
+            newProfileName = '';
+        } catch (e: unknown) {
+            profileError = e instanceof Error ? e.message : 'Failed to create profile';
+        } finally { addingProfile = false; }
+    }
+
+    async function handleDeleteProfile(id: number, name: string) {
+        if (!confirm(`Remove profile "${name}"? This will delete their ignore list and channel subscriptions.`)) return;
+        try {
+            await deleteProfile(id);
+            profiles = profiles.filter(p => p.id !== id);
+        } catch (e: unknown) {
+            profileError = e instanceof Error ? e.message : 'Failed to delete profile';
+        }
+    }
+
     async function handleSubmitUrl() {
         submitError = ''; submitSuccess = '';
         submitting = true;
@@ -165,6 +198,40 @@
         </div>
         {#if submitError}<p class="error">{submitError}</p>{/if}
         {#if submitSuccess}<p class="ok">{submitSuccess}</p>{/if}
+    </section>
+
+    <!-- Profiles -->
+    <section>
+        <h3>User Profiles</h3>
+        <div class="add-row">
+            <input
+                bind:value={newProfileName}
+                placeholder="Profile name"
+                onkeydown={(e) => { if (e.key === 'Enter') handleCreateProfile(); }}
+            />
+            <button onclick={handleCreateProfile} disabled={addingProfile || !newProfileName.trim()}>
+                {addingProfile ? 'Creating…' : 'Create'}
+            </button>
+        </div>
+        {#if profileError}<p class="error">{profileError}</p>{/if}
+        {#if profiles.length > 0}
+            <table>
+                <thead><tr><th>Name</th><th>Created</th><th></th></tr></thead>
+                <tbody>
+                    {#each profiles as p (p.id)}
+                        <tr>
+                            <td>{p.name}</td>
+                            <td>{new Date(p.created_at).toLocaleDateString()}</td>
+                            <td class="actions">
+                                <button class="danger" onclick={() => handleDeleteProfile(p.id, p.name)}>Remove</button>
+                            </td>
+                        </tr>
+                    {/each}
+                </tbody>
+            </table>
+        {:else}
+            <p class="empty">No profiles yet.</p>
+        {/if}
     </section>
 
     <!-- Settings -->

@@ -16,17 +16,22 @@ fn is_admin(state: &AppState, token: Option<&str>) -> bool {
         .unwrap_or(false)
 }
 
+#[derive(Deserialize)]
+pub struct ListChannelsParams {
+    /// When true, return all channels regardless of profile subscriptions.
+    /// Useful for the subscription management UI.
+    pub all: Option<bool>,
+}
+
 pub async fn list_channels(
     State(state): State<AppState>,
     SessionToken(token): SessionToken,
     ProfileCookie(profile_id): ProfileCookie,
+    axum::extract::Query(params): axum::extract::Query<ListChannelsParams>,
 ) -> impl IntoResponse {
-    // Admin sees all channels regardless of subscriptions
-    let effective_profile = if is_admin(&state, token.as_deref()) {
-        None
-    } else {
-        profile_id
-    };
+    // Admin always sees all; ?all=true bypasses profile filter for non-admin too
+    let show_all = is_admin(&state, token.as_deref()) || params.all.unwrap_or(false);
+    let effective_profile = if show_all { None } else { profile_id };
     match state.db.list_channels_for_profile(effective_profile) {
         Ok(channels) => Json(channels).into_response(),
         Err(e) => {
