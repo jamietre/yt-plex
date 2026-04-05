@@ -141,7 +141,9 @@ pub async fn oauth_callback(
     };
 
     if !token_resp.status().is_success() {
-        warn!("token exchange returned HTTP {}", token_resp.status());
+        let status = token_resp.status();
+        let body = token_resp.text().await.unwrap_or_default();
+        warn!("token exchange returned HTTP {status}: {body}");
         return error_page("Failed to sign in with Google. Please try again.");
     }
     let token_data: TokenResponse = match token_resp.json().await {
@@ -167,7 +169,9 @@ pub async fn oauth_callback(
     };
 
     if !userinfo_resp.status().is_success() {
-        warn!("userinfo returned HTTP {}", userinfo_resp.status());
+        let status = userinfo_resp.status();
+        let body = userinfo_resp.text().await.unwrap_or_default();
+        warn!("userinfo returned HTTP {status}: {body}");
         return error_page("Failed to fetch user info from Google.");
     }
     let userinfo: UserInfo = match userinfo_resp.json().await {
