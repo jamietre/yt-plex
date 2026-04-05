@@ -183,12 +183,14 @@
                 <label>Base path <input bind:value={settings.output.base_path} /></label>
                 <label>Path template <input bind:value={settings.output.path_template} /></label>
                 <small>
-                    Variables: <code>{'{channel}'}</code> channel name, <code>{'{date}'}</code> upload date (YYYYMMDD),
-                    <code>{'{title}'}</code> video title, <code>{'{id}'}</code> YouTube video ID, <code>{'{ext}'}</code> file extension.
+                    Variables: <code>{'{channel}'}</code> channel name, <code>{'{title}'}</code> video title,
+                    <code>{'{id}'}</code> YouTube video ID, <code>{'{ext}'}</code> file extension,
+                    <code>{'{date}'}</code> full date (YYYY-MM-DD), <code>{'{yyyy}'}</code> year, <code>{'{mm}'}</code> month, <code>{'{dd}'}</code> day.
                     <br />
                     <strong>Important:</strong> the YouTube ID must appear wrapped in square brackets somewhere in the filename
                     (e.g. <code>{'[{id}]'}</code>) so the server can match downloaded files back to their video record.
-                    Example: <code>{'{channel}/{title} [{id}].{ext}'}</code>
+                    <br />
+                    Recommended for Plex TV Shows: <code>{'{channel}/Season {yyyy}/{title} [{id}].{ext}'}</code>
                 </small>
             </fieldset>
             {#if settingsError}<p class="error">{settingsError}</p>{/if}
