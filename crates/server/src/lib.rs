@@ -6,7 +6,7 @@ pub mod template;
 pub mod worker;
 pub mod ws;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use axum::{
     routing::{get, post, put},
     Router,
@@ -51,6 +51,14 @@ pub async fn create_app_state(config: Config, config_path: String) -> Result<App
         std::fs::create_dir_all(p)?;
     }
     let db = Arc::new(Db::open(db_path.to_str().unwrap())?);
+    let reset = db.reset_interrupted_jobs()?;
+    if reset > 0 {
+        tracing::warn!("reset {reset} interrupted job(s) back to queued");
+    }
+
+    // Check required external dependencies
+    check_dependencies()?;
+
     let ws_hub = WsHub::new();
     Ok(AppState {
         db,
@@ -76,4 +84,16 @@ pub fn build_router(state: AppState) -> Router {
         .fallback(routes::assets::serve_asset)
         .with_state(state)
         .layer(TraceLayer::new_for_http())
+}
+
+fn check_dependencies() -> Result<()> {
+    let status = std::process::Command::new("yt-dlp")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        _ => bail!("yt-dlp not found on PATH — install it before starting the server"),
+    }
 }

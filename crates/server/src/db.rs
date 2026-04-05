@@ -85,6 +85,18 @@ impl Db {
         rows.next().transpose().map_err(Into::into)
     }
 
+    /// Reset any jobs stuck in 'downloading' or 'copying' back to 'queued'.
+    /// Called on startup to recover from interrupted runs.
+    pub fn reset_interrupted_jobs(&self) -> Result<u64> {
+        let now = Utc::now().to_rfc3339();
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE jobs SET status='queued', updated_at=?1 WHERE status IN ('downloading', 'copying')",
+            rusqlite::params![now],
+        )?;
+        Ok(n as u64)
+    }
+
     pub fn insert_session(&self, token: &str) -> Result<()> {
         let now = Utc::now();
         let expires_at = now + chrono::Duration::days(7);
