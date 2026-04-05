@@ -89,9 +89,13 @@
             />
             <div class="info">
                 <h1 class="title">{video.title}</h1>
-                {#if video.published_at}
-                    <p class="meta">Added to YouTube: {new Date(video.published_at).toLocaleDateString()}</p>
-                {/if}
+                <p class="meta">
+                    {#if video.published_at}
+                        Added to YouTube: {new Date(video.published_at).toLocaleDateString()}
+                    {:else}
+                        First seen: {new Date(video.last_seen_at).toLocaleDateString()}
+                    {/if}
+                </p>
                 <p class="status" style="color:{statusColour[video.status]}">
                     {statusLabel[video.status]}
                 </p>
