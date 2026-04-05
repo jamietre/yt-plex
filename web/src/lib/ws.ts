@@ -7,6 +7,7 @@ export interface WsMessage {
     channel_name: string | null;
     title: string | null;
     error: string | null;
+    progress?: number | null;
 }
 
 export function createWsStore() {

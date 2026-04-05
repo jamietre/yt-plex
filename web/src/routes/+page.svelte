@@ -27,7 +27,14 @@
         if (msg) {
             jobs = jobs.map(j =>
                 j.id === msg.job_id
-                    ? { ...j, status: msg.status, channel_name: msg.channel_name ?? j.channel_name, title: msg.title ?? j.title, error: msg.error }
+                    ? {
+                        ...j,
+                        status: msg.status,
+                        channel_name: msg.channel_name ?? j.channel_name,
+                        title: msg.title ?? j.title,
+                        error: msg.error,
+                        progress: msg.progress ?? (msg.status !== 'downloading' ? null : j.progress),
+                      }
                     : j
             );
         }
@@ -75,7 +82,12 @@
         <tbody>
             {#each jobs as job (job.id)}
                 <tr>
-                    <td style="color:{statusColour[job.status]}">{job.status}</td>
+                    <td style="color:{statusColour[job.status]}">
+                        {job.status}
+                        {#if job.status === 'downloading' && job.progress != null}
+                            <span class="progress">{job.progress.toFixed(0)}%</span>
+                        {/if}
+                    </td>
                     <td>{job.channel_name ?? '—'}</td>
                     <td>
                         {job.title ?? '—'}
@@ -96,4 +108,5 @@
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #333; }
     .error { color: red; }
+    .progress { font-size: 0.85em; opacity: 0.8; margin-left: 0.3em; }
 </style>

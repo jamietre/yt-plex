@@ -7,6 +7,7 @@ export interface Job {
     error: string | null;
     created_at: string;
     updated_at: string;
+    progress?: number | null;
 }
 
 export async function listJobs(): Promise<Job[]> {
