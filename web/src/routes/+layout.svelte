@@ -4,14 +4,20 @@
     import type { Snippet } from 'svelte';
 
     let { children }: { children: Snippet } = $props();
+    let loggedIn = $state(false);
+
+    $effect(() => {
+        fetch('/api/auth/me').then(r => { loggedIn = r.ok; });
+    });
 
     async function handleLogout() {
         await logout();
+        loggedIn = false;
         window.location.href = '/login';
     }
 </script>
 
-{#if $page.url.pathname !== '/login'}
+{#if loggedIn && $page.url.pathname !== '/login'}
 <nav>
     <a href="/">Jobs</a>
     <a href="/settings">Settings</a>

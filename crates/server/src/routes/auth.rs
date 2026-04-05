@@ -360,6 +360,15 @@ pub async fn device_poll(
         .into_response()
 }
 
+// ── Me ───────────────────────────────────────────────────────────────────────
+
+pub async fn me(State(state): State<AppState>, SessionToken(token): SessionToken) -> StatusCode {
+    match token {
+        Some(t) if state.db.is_valid_session(&t).unwrap_or(false) => StatusCode::OK,
+        _ => StatusCode::UNAUTHORIZED,
+    }
+}
+
 // ── Logout ────────────────────────────────────────────────────────────────────
 
 pub async fn logout(
