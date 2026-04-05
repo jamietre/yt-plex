@@ -114,9 +114,19 @@ async fn tick(
             .await
             .with_context(|| format!("creating dir: {}", parent.display()))?;
     }
-    tokio::fs::rename(&src, &dest)
-        .await
-        .with_context(|| format!("moving {} → {}", src.display(), dest.display()))?;
+    // rename(2) fails across devices; fall back to copy-then-delete
+    if let Err(e) = tokio::fs::rename(&src, &dest).await {
+        if e.raw_os_error() == Some(18) {
+            // EXDEV: cross-device link
+            tokio::fs::copy(&src, &dest)
+                .await
+                .with_context(|| format!("copying {} → {}", src.display(), dest.display()))?;
+            tokio::fs::remove_file(&src).await.ok();
+        } else {
+            return Err(e)
+                .with_context(|| format!("moving {} → {}", src.display(), dest.display()));
+        }
+    }
 
     db.update_job(&job.id, JobStatus::Done, None, None, None)?;
     let updated = db.get_job(&job.id)?.unwrap();
