@@ -11,7 +11,9 @@ use axum::{
     routing::{get, post, put},
     Router,
 };
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tower_http::trace::TraceLayer;
 use yt_plex_common::config::Config;
 
@@ -23,6 +25,7 @@ pub struct AppState {
     pub config: Arc<std::sync::RwLock<Config>>,
     pub config_path: String,
     pub ws_hub: WsHub,
+    pub oauth_states: Arc<Mutex<HashMap<String, Instant>>>,
 }
 
 pub async fn create_app_state(config: Config, config_path: String) -> Result<AppState> {
@@ -47,12 +50,14 @@ pub async fn create_app_state(config: Config, config_path: String) -> Result<App
         config: Arc::new(std::sync::RwLock::new(config)),
         config_path,
         ws_hub,
+        oauth_states: Arc::new(Mutex::new(HashMap::new())),
     })
 }
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
-        .route("/api/login", post(routes::auth::login))
+        .route("/api/auth/login", get(routes::auth::oauth_login))
+        .route("/api/auth/callback", get(routes::auth::oauth_callback))
         .route("/api/logout", post(routes::auth::logout))
         .route("/api/jobs", post(routes::jobs::submit_job))
         .route("/api/jobs", get(routes::jobs::list_jobs))
