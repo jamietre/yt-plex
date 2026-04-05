@@ -90,7 +90,7 @@
             <div class="info">
                 <h1 class="title">{video.title}</h1>
                 {#if video.published_at}
-                    <p class="meta">Published {new Date(video.published_at).toLocaleDateString()}</p>
+                    <p class="meta">Added to YouTube: {new Date(video.published_at).toLocaleDateString()}</p>
                 {/if}
                 <p class="status" style="color:{statusColour[video.status]}">
                     {statusLabel[video.status]}
