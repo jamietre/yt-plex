@@ -24,6 +24,7 @@ run = "cargo build --release -p yt-plex-server"
 
 [tasks.dev-server]
 description = "Run backend with auto-reload (requires cargo-watch)"
+env = { YT_PLEX_CONFIG = ".config/yt-plex/config.toml" }
 run = "cargo watch -x 'run -p yt-plex-server'"
 
 [tasks.dev]
