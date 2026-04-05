@@ -172,6 +172,26 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS channels (
+    id                   TEXT PRIMARY KEY,
+    youtube_channel_url  TEXT NOT NULL UNIQUE,
+    name                 TEXT NOT NULL,
+    last_synced_at       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS videos (
+    youtube_id    TEXT PRIMARY KEY,
+    channel_id    TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    title         TEXT NOT NULL,
+    published_at  TEXT,
+    downloaded_at TEXT,
+    last_seen_at  TEXT NOT NULL,
+    ignored_at    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_videos_channel_id ON videos(channel_id);
+CREATE INDEX IF NOT EXISTS idx_videos_published_at ON videos(published_at DESC);
 ";
 
 #[cfg(test)]
@@ -256,5 +276,25 @@ mod tests {
         db.insert_session("tok456").unwrap();
         db.delete_session("tok456").unwrap();
         assert!(!db.is_valid_session("tok456").unwrap());
+    }
+
+    #[test]
+    fn channels_table_exists() {
+        let db = test_db();
+        let conn = db.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM channels", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn videos_table_exists() {
+        let db = test_db();
+        let conn = db.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM videos", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
     }
 }
