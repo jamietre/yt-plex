@@ -109,6 +109,15 @@ pub struct Video {
     pub file_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Profile {
+    pub id: i64,
+    pub name: String,
+    pub linked_email: Option<String>,
+    pub is_admin_profile: bool,
+    pub created_at: String,
+}
+
 /// Paginated response for list_videos_for_channel.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VideoPage {

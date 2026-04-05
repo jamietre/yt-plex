@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tracing::error;
 
-use crate::{routes::auth::SessionToken, sync, AppState};
+use crate::{routes::auth::SessionToken, routes::profiles::ProfileCookie, sync, AppState};
 
 fn is_admin(state: &AppState, token: Option<&str>) -> bool {
     token
@@ -16,8 +16,18 @@ fn is_admin(state: &AppState, token: Option<&str>) -> bool {
         .unwrap_or(false)
 }
 
-pub async fn list_channels(State(state): State<AppState>) -> impl IntoResponse {
-    match state.db.list_channels() {
+pub async fn list_channels(
+    State(state): State<AppState>,
+    SessionToken(token): SessionToken,
+    ProfileCookie(profile_id): ProfileCookie,
+) -> impl IntoResponse {
+    // Admin sees all channels regardless of subscriptions
+    let effective_profile = if is_admin(&state, token.as_deref()) {
+        None
+    } else {
+        profile_id
+    };
+    match state.db.list_channels_for_profile(effective_profile) {
         Ok(channels) => Json(channels).into_response(),
         Err(e) => {
             error!("list_channels: {e}");
@@ -104,6 +114,8 @@ pub async fn sync_channel(
 
 pub async fn list_channel_videos(
     State(state): State<AppState>,
+    SessionToken(token): SessionToken,
+    ProfileCookie(profile_id): ProfileCookie,
     Path(id): Path<String>,
     axum::extract::Query(params): axum::extract::Query<VideoQueryParams>,
 ) -> impl IntoResponse {
@@ -114,7 +126,9 @@ pub async fn list_channel_videos(
     let search = params.q.as_deref().filter(|s| !s.is_empty());
     let limit = params.limit.unwrap_or(48).min(200);
     let offset = params.offset.unwrap_or(0);
-    match state.db.list_videos_for_channel(&id, filter, show_ignored, search, limit, offset) {
+    // Admin ignores are global (None); user profiles use per-profile ignores
+    let effective_profile = if is_admin(&state, token.as_deref()) { None } else { profile_id };
+    match state.db.list_videos_for_channel(&id, filter, show_ignored, search, limit, offset, effective_profile) {
         Ok(page) => Json(page).into_response(),
         Err(e) => {
             error!("list_videos_for_channel: {e}");

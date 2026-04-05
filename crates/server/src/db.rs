@@ -3,7 +3,7 @@ use chrono::Utc;
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
-use yt_plex_common::models::{Channel, Job, JobStatus, Video, VideoFilter, VideoPage, VideoStatus};
+use yt_plex_common::models::{Channel, Job, JobStatus, Profile, Video, VideoFilter, VideoPage, VideoStatus};
 
 #[derive(Clone)]
 pub struct Db {
@@ -254,7 +254,12 @@ impl Db {
     }
 
     pub fn get_video(&self, youtube_id: &str) -> Result<Option<Video>> {
+        self.get_video_for_profile(youtube_id, None)
+    }
+
+    pub fn get_video_for_profile(&self, youtube_id: &str, profile_id: Option<i64>) -> Result<Option<Video>> {
         let active_job_subq = "EXISTS(SELECT 1 FROM jobs WHERE url = 'https://www.youtube.com/watch?v=' || v.youtube_id AND status IN ('queued','downloading','copying'))";
+        let profile_ignored_subq = "EXISTS(SELECT 1 FROM profile_video_ignores WHERE profile_id=?2 AND youtube_id=v.youtube_id)";
         let sql = format!(
             "SELECT v.youtube_id, v.channel_id, v.title, v.published_at,
                     v.downloaded_at, v.last_seen_at, v.ignored_at,
@@ -262,6 +267,7 @@ impl Db {
                         WHEN {active_job_subq} THEN 'in_progress'
                         WHEN v.downloaded_at IS NOT NULL THEN 'downloaded'
                         WHEN v.ignored_at IS NOT NULL THEN 'ignored'
+                        WHEN ?2 IS NOT NULL AND {profile_ignored_subq} THEN 'ignored'
                         ELSE 'new'
                     END as derived_status,
                     v.description,
@@ -271,7 +277,7 @@ impl Db {
         );
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(&sql)?;
-        let mut rows = stmt.query_map(rusqlite::params![youtube_id], |row| {
+        let mut rows = stmt.query_map(rusqlite::params![youtube_id, profile_id], |row| {
             let status_str: String = row.get(7)?;
             let status = match status_str.as_str() {
                 "in_progress" => VideoStatus::InProgress,
@@ -312,9 +318,17 @@ impl Db {
         search: Option<&str>,
         limit: usize,
         offset: usize,
+        profile_id: Option<i64>,
     ) -> Result<VideoPage> {
         let active_job_subq = "EXISTS(SELECT 1 FROM jobs WHERE url = 'https://www.youtube.com/watch?v=' || v.youtube_id AND status IN ('queued','downloading','copying'))";
-        let ignore_cond = if show_ignored { "1=1" } else { "v.ignored_at IS NULL" };
+        let profile_ignored_subq = "EXISTS(SELECT 1 FROM profile_video_ignores WHERE profile_id=?5 AND youtube_id=v.youtube_id)";
+        let ignore_cond = if show_ignored {
+            "1=1".to_string()
+        } else if profile_id.is_some() {
+            format!("v.ignored_at IS NULL AND NOT ({profile_ignored_subq})")
+        } else {
+            "v.ignored_at IS NULL".to_string()
+        };
 
         let filter_cond = match filter {
             VideoFilter::New => format!(
@@ -327,6 +341,7 @@ impl Db {
         };
 
         // ?2 IS NULL short-circuits before MATCH is evaluated, so NULL search is safe.
+        // ?5 is profile_id (may be NULL for admin).
         let sql = format!(
             "SELECT v.youtube_id, v.channel_id, v.title, v.published_at,
                     v.downloaded_at, v.last_seen_at, v.ignored_at,
@@ -334,6 +349,7 @@ impl Db {
                         WHEN {active_job_subq} THEN 'in_progress'
                         WHEN v.downloaded_at IS NOT NULL THEN 'downloaded'
                         WHEN v.ignored_at IS NOT NULL THEN 'ignored'
+                        WHEN ?5 IS NOT NULL AND {profile_ignored_subq} THEN 'ignored'
                         ELSE 'new'
                     END as derived_status,
                     v.description,
@@ -351,7 +367,7 @@ impl Db {
         // Fetch limit+1 to detect whether there are more pages.
         let fetch_limit = (limit + 1) as i64;
         let rows = stmt.query_map(
-            rusqlite::params![channel_id, search, fetch_limit, offset as i64],
+            rusqlite::params![channel_id, search, fetch_limit, offset as i64, profile_id],
             |row| {
                 let status_str: String = row.get(7)?;
                 let status = match status_str.as_str() {
@@ -380,6 +396,142 @@ impl Db {
             videos.pop();
         }
         Ok(VideoPage { videos, has_more })
+    }
+
+    // ── Profile methods ────────────────────────────────────────────────────────
+
+    fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
+        Ok(Profile {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            linked_email: row.get(2)?,
+            is_admin_profile: row.get::<_, i64>(3)? != 0,
+            created_at: row.get(4)?,
+        })
+    }
+
+    pub fn list_profiles(&self, include_admin: bool) -> Result<Vec<Profile>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = if include_admin {
+            "SELECT id, name, linked_email, is_admin_profile, created_at FROM profiles ORDER BY name ASC"
+        } else {
+            "SELECT id, name, linked_email, is_admin_profile, created_at FROM profiles WHERE is_admin_profile=0 ORDER BY name ASC"
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt.query_map([], Self::row_to_profile)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn create_profile(&self, name: &str, linked_email: Option<&str>, is_admin: bool) -> Result<Profile> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO profiles (name, linked_email, is_admin_profile) VALUES (?1, ?2, ?3)",
+            rusqlite::params![name, linked_email, is_admin as i64],
+        )?;
+        let id = conn.last_insert_rowid();
+        let created_at: String = conn.query_row(
+            "SELECT created_at FROM profiles WHERE id=?1",
+            rusqlite::params![id],
+            |r| r.get(0),
+        )?;
+        Ok(Profile {
+            id,
+            name: name.to_owned(),
+            linked_email: linked_email.map(str::to_owned),
+            is_admin_profile: is_admin,
+            created_at,
+        })
+    }
+
+    pub fn delete_profile(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM profiles WHERE id=?1", rusqlite::params![id])?;
+        Ok(())
+    }
+
+    pub fn get_profile(&self, id: i64) -> Result<Option<Profile>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, linked_email, is_admin_profile, created_at FROM profiles WHERE id=?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], Self::row_to_profile)?;
+        rows.next().transpose().map_err(Into::into)
+    }
+
+    pub fn get_profile_by_email(&self, email: &str) -> Result<Option<Profile>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, linked_email, is_admin_profile, created_at FROM profiles WHERE linked_email=?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![email], Self::row_to_profile)?;
+        rows.next().transpose().map_err(Into::into)
+    }
+
+    pub fn subscribe_channel(&self, profile_id: i64, channel_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO profile_channels (profile_id, channel_id) VALUES (?1, ?2)",
+            rusqlite::params![profile_id, channel_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn unsubscribe_channel(&self, profile_id: i64, channel_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM profile_channels WHERE profile_id=?1 AND channel_id=?2",
+            rusqlite::params![profile_id, channel_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_profile_channel_ids(&self, profile_id: i64) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT channel_id FROM profile_channels WHERE profile_id=?1",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![profile_id], |r| r.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn list_channels_for_profile(&self, profile_id: Option<i64>) -> Result<Vec<Channel>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = match profile_id {
+            None => "SELECT id, youtube_channel_url, name, last_synced_at FROM channels ORDER BY name ASC".to_string(),
+            Some(pid) => format!(
+                "SELECT id, youtube_channel_url, name, last_synced_at FROM channels
+                 WHERE id IN (SELECT channel_id FROM profile_channels WHERE profile_id={pid})
+                 ORDER BY name ASC"
+            ),
+        };
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map([], |row| {
+            Ok(Channel {
+                id: row.get(0)?,
+                youtube_channel_url: row.get(1)?,
+                name: row.get(2)?,
+                last_synced_at: row.get(3)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn ignore_video_for_profile(&self, profile_id: i64, youtube_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO profile_video_ignores (profile_id, youtube_id) VALUES (?1, ?2)",
+            rusqlite::params![profile_id, youtube_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn unignore_video_for_profile(&self, profile_id: i64, youtube_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM profile_video_ignores WHERE profile_id=?1 AND youtube_id=?2",
+            rusqlite::params![profile_id, youtube_id],
+        )?;
+        Ok(())
     }
 }
 
@@ -473,6 +625,27 @@ CREATE TRIGGER IF NOT EXISTS videos_fts_delete AFTER DELETE ON videos BEGIN
     INSERT INTO videos_fts(videos_fts, rowid, title, description)
     VALUES ('delete', old.rowid, old.title, old.description);
 END;
+
+CREATE TABLE IF NOT EXISTS profiles (
+    id               INTEGER PRIMARY KEY,
+    name             TEXT    NOT NULL UNIQUE,
+    linked_email     TEXT,
+    is_admin_profile INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS profile_channels (
+    profile_id  INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    channel_id  TEXT    NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    PRIMARY KEY (profile_id, channel_id)
+);
+
+CREATE TABLE IF NOT EXISTS profile_video_ignores (
+    profile_id  INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    youtube_id  TEXT    NOT NULL,
+    ignored_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    PRIMARY KEY (profile_id, youtube_id)
+);
 ";
 
 #[cfg(test)]
@@ -623,7 +796,7 @@ mod tests {
         let db = test_db();
         let ch = insert_test_channel(&db);
         db.upsert_video("abc123", &ch.id, "Test Video", Some("2026-01-01"), "2026-04-05T00:00:00Z").unwrap();
-        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 50, 0).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 50, 0, None).unwrap();
         let videos = page.videos;
         assert_eq!(videos.len(), 1);
         assert_eq!(videos[0].youtube_id, "abc123");
@@ -636,10 +809,10 @@ mod tests {
         let ch = insert_test_channel(&db);
         db.upsert_video("abc123", &ch.id, "Test Video", None, "2026-04-05T00:00:00Z").unwrap();
         db.set_video_downloaded("abc123", "2026-04-05T12:00:00Z", "/tmp/test.mp4").unwrap();
-        let page = db.list_videos_for_channel(&ch.id, VideoFilter::New, false, None, 50, 0).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::New, false, None, 50, 0, None).unwrap();
         let new_videos = page.videos;
         assert_eq!(new_videos.len(), 0);
-        let page = db.list_videos_for_channel(&ch.id, VideoFilter::Downloaded, false, None, 50, 0).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::Downloaded, false, None, 50, 0, None).unwrap();
         let downloaded = page.videos;
         assert_eq!(downloaded.len(), 1);
         assert_eq!(downloaded[0].status, VideoStatus::Downloaded);
@@ -651,10 +824,10 @@ mod tests {
         let ch = insert_test_channel(&db);
         db.upsert_video("xyz789", &ch.id, "Another Video", None, "2026-04-05T00:00:00Z").unwrap();
         db.ignore_video("xyz789", "2026-04-05T12:00:00Z").unwrap();
-        let page = db.list_videos_for_channel(&ch.id, VideoFilter::New, false, None, 50, 0).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::New, false, None, 50, 0, None).unwrap();
         let new_videos = page.videos;
         assert_eq!(new_videos.len(), 0);
-        let page = db.list_videos_for_channel(&ch.id, VideoFilter::New, true, None, 50, 0).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::New, true, None, 50, 0, None).unwrap();
         let with_ignored = page.videos;
         assert_eq!(with_ignored.len(), 1);
         assert_eq!(with_ignored[0].status, VideoStatus::Ignored);
@@ -667,7 +840,7 @@ mod tests {
         db.upsert_video("vid1", &ch.id, "Video", None, "2026-04-05T00:00:00Z").unwrap();
         db.ignore_video("vid1", "2026-04-05T12:00:00Z").unwrap();
         db.unignore_video("vid1").unwrap();
-        let page = db.list_videos_for_channel(&ch.id, VideoFilter::New, false, None, 50, 0).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::New, false, None, 50, 0, None).unwrap();
         let new_videos = page.videos;
         assert_eq!(new_videos.len(), 1);
         assert_eq!(new_videos[0].status, VideoStatus::New);
@@ -679,7 +852,7 @@ mod tests {
         let ch = insert_test_channel(&db);
         db.upsert_video("old", &ch.id, "Old Video", Some("2025-01-01"), "2026-04-05T00:00:00Z").unwrap();
         db.upsert_video("new", &ch.id, "New Video", Some("2026-01-01"), "2026-04-05T00:00:00Z").unwrap();
-        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 50, 0).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 50, 0, None).unwrap();
         let videos = page.videos;
         assert_eq!(videos[0].youtube_id, "new");
         assert_eq!(videos[1].youtube_id, "old");
@@ -692,10 +865,10 @@ mod tests {
         db.upsert_video("v1", &ch.id, "V1", None, "2026-04-05T00:00:00Z").unwrap();
         db.upsert_video("v2", &ch.id, "V2", None, "2026-04-05T00:00:00Z").unwrap();
         db.ignore_video("v2", "2026-04-05T12:00:00Z").unwrap();
-        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 50, 0).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 50, 0, None).unwrap();
         let all = page.videos;
         assert_eq!(all.len(), 1);
-        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, true, None, 50, 0).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, true, None, 50, 0, None).unwrap();
         let all_with_ignored = page.videos;
         assert_eq!(all_with_ignored.len(), 2);
     }
@@ -718,7 +891,7 @@ mod tests {
         db.set_video_downloaded("abc123", "2026-04-05T06:00:00Z", "/tmp/test.mp4").unwrap();
         // Upsert again with updated title and last_seen_at
         db.upsert_video("abc123", &ch.id, "Updated Title", None, "2026-04-05T12:00:00Z").unwrap();
-        let page = db.list_videos_for_channel(&ch.id, VideoFilter::Downloaded, false, None, 50, 0).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::Downloaded, false, None, 50, 0, None).unwrap();
         let videos = page.videos;
         assert_eq!(videos.len(), 1);
         assert_eq!(videos[0].title, "Updated Title");
@@ -782,7 +955,7 @@ mod tests {
         let ch = insert_test_channel(&db);
         db.upsert_video("v1", &ch.id, "Rust Programming", None, "2026-04-05T00:00:00Z").unwrap();
         db.upsert_video("v2", &ch.id, "Python Cooking", None, "2026-04-05T00:00:00Z").unwrap();
-        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, Some("Rust"), 50, 0).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, Some("Rust"), 50, 0, None).unwrap();
         assert_eq!(page.videos.len(), 1);
         assert_eq!(page.videos[0].youtube_id, "v1");
         assert!(!page.has_more);
@@ -795,12 +968,157 @@ mod tests {
         for i in 0..5 {
             db.upsert_video(&format!("v{i}"), &ch.id, &format!("Video {i}"), None, "2026-04-05T00:00:00Z").unwrap();
         }
-        let page1 = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 3, 0).unwrap();
+        let page1 = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 3, 0, None).unwrap();
         assert_eq!(page1.videos.len(), 3);
         assert!(page1.has_more);
 
-        let page2 = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 3, 3).unwrap();
+        let page2 = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 3, 3, None).unwrap();
         assert_eq!(page2.videos.len(), 2);
         assert!(!page2.has_more);
+    }
+
+    // ── Profile tests ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn create_and_list_profiles() {
+        let db = test_db();
+        let p = db.create_profile("Alice", None, false).unwrap();
+        assert_eq!(p.name, "Alice");
+        assert!(!p.is_admin_profile);
+        assert!(p.linked_email.is_none());
+
+        let list = db.list_profiles(false).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, p.id);
+    }
+
+    #[test]
+    fn admin_profiles_hidden_from_public_list() {
+        let db = test_db();
+        db.create_profile("admin@example.com", Some("admin@example.com"), true).unwrap();
+        db.create_profile("Bob", None, false).unwrap();
+
+        let public = db.list_profiles(false).unwrap();
+        assert_eq!(public.len(), 1);
+        assert_eq!(public[0].name, "Bob");
+
+        let all = db.list_profiles(true).unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn get_profile_by_email() {
+        let db = test_db();
+        db.create_profile("admin@example.com", Some("admin@example.com"), true).unwrap();
+        let found = db.get_profile_by_email("admin@example.com").unwrap().unwrap();
+        assert_eq!(found.linked_email.as_deref(), Some("admin@example.com"));
+        assert!(found.is_admin_profile);
+
+        assert!(db.get_profile_by_email("other@example.com").unwrap().is_none());
+    }
+
+    #[test]
+    fn delete_profile_removes_it() {
+        let db = test_db();
+        let p = db.create_profile("Carol", None, false).unwrap();
+        db.delete_profile(p.id).unwrap();
+        assert!(db.get_profile(p.id).unwrap().is_none());
+        assert_eq!(db.list_profiles(false).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn subscribe_and_list_channels() {
+        let db = test_db();
+        let p = db.create_profile("Dave", None, false).unwrap();
+        let ch = db.insert_channel("https://youtube.com/@test", "Test").unwrap();
+
+        db.subscribe_channel(p.id, &ch.id).unwrap();
+        let ids = db.list_profile_channel_ids(p.id).unwrap();
+        assert_eq!(ids, vec![ch.id.clone()]);
+
+        db.unsubscribe_channel(p.id, &ch.id).unwrap();
+        assert!(db.list_profile_channel_ids(p.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_channels_for_profile_filters_subscriptions() {
+        let db = test_db();
+        let p = db.create_profile("Eve", None, false).unwrap();
+        let ch1 = db.insert_channel("https://youtube.com/@A", "A").unwrap();
+        let ch2 = db.insert_channel("https://youtube.com/@B", "B").unwrap();
+
+        // Admin (None) sees all
+        assert_eq!(db.list_channels_for_profile(None).unwrap().len(), 2);
+
+        // Profile sees only subscribed channels
+        db.subscribe_channel(p.id, &ch1.id).unwrap();
+        let profile_channels = db.list_channels_for_profile(Some(p.id)).unwrap();
+        assert_eq!(profile_channels.len(), 1);
+        assert_eq!(profile_channels[0].id, ch1.id);
+
+        let _ = ch2; // suppress unused warning
+    }
+
+    #[test]
+    fn profile_video_ignore_and_unignore() {
+        let db = test_db();
+        let p = db.create_profile("Frank", None, false).unwrap();
+        let ch = insert_test_channel(&db);
+        db.upsert_video("v1", &ch.id, "Video", None, "2026-04-05T00:00:00Z").unwrap();
+
+        db.ignore_video_for_profile(p.id, "v1").unwrap();
+
+        // With profile: video is hidden
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 50, 0, Some(p.id)).unwrap();
+        assert_eq!(page.videos.len(), 0);
+
+        // Without profile (admin): video still visible
+        let page_admin = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 50, 0, None).unwrap();
+        assert_eq!(page_admin.videos.len(), 1);
+
+        db.unignore_video_for_profile(p.id, "v1").unwrap();
+        let page_after = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 50, 0, Some(p.id)).unwrap();
+        assert_eq!(page_after.videos.len(), 1);
+    }
+
+    #[test]
+    fn profile_ignored_status_reflected_in_get_video() {
+        let db = test_db();
+        let p = db.create_profile("Grace", None, false).unwrap();
+        let ch = insert_test_channel(&db);
+        db.upsert_video("v1", &ch.id, "Video", None, "2026-04-05T00:00:00Z").unwrap();
+
+        db.ignore_video_for_profile(p.id, "v1").unwrap();
+
+        let v_profile = db.get_video_for_profile("v1", Some(p.id)).unwrap().unwrap();
+        assert_eq!(v_profile.status, VideoStatus::Ignored);
+
+        let v_admin = db.get_video("v1").unwrap().unwrap();
+        assert_eq!(v_admin.status, VideoStatus::New);
+    }
+
+    #[test]
+    fn delete_profile_cascades_ignores_and_subscriptions() {
+        let db = test_db();
+        let p = db.create_profile("Henry", None, false).unwrap();
+        let ch = insert_test_channel(&db);
+        db.upsert_video("v1", &ch.id, "Video", None, "2026-04-05T00:00:00Z").unwrap();
+        db.subscribe_channel(p.id, &ch.id).unwrap();
+        db.ignore_video_for_profile(p.id, "v1").unwrap();
+
+        db.delete_profile(p.id).unwrap();
+
+        // Data cascaded cleanly
+        let conn = db.conn.lock().unwrap();
+        let ignore_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM profile_video_ignores WHERE profile_id=?1",
+            rusqlite::params![p.id], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(ignore_count, 0);
+        let sub_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM profile_channels WHERE profile_id=?1",
+            rusqlite::params![p.id], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(sub_count, 0);
     }
 }

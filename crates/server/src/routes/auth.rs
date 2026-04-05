@@ -341,16 +341,50 @@ pub async fn device_poll(
         .into_response();
     }
 
+    // Auto-create or look up admin profile linked to this email
+    let admin_profile_id: Option<i64> = match state.db.get_profile_by_email(&userinfo.email) {
+        Ok(Some(p)) => Some(p.id),
+        Ok(None) => {
+            match state.db.create_profile(&userinfo.email, Some(&userinfo.email), true) {
+                Ok(p) => Some(p.id),
+                Err(e) => {
+                    warn!("create admin profile for {}: {e}", userinfo.email);
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            warn!("get_profile_by_email for {}: {e}", userinfo.email);
+            None
+        }
+    };
+
     // Clean up state
     state.oauth_states.lock().unwrap().remove(&params.token);
 
-    let cookie = format!(
+    let session_cookie = format!(
         "session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800",
         session_token
     );
+
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        header::SET_COOKIE,
+        session_cookie.parse().expect("valid cookie"),
+    );
+    if let Some(profile_id) = admin_profile_id {
+        let profile_cookie = format!(
+            "yt_plex_profile={profile_id}; Path=/; SameSite=Lax; Max-Age=604800"
+        );
+        headers.append(
+            header::SET_COOKIE,
+            profile_cookie.parse().expect("valid cookie"),
+        );
+    }
+
     (
         StatusCode::OK,
-        [(header::SET_COOKIE, cookie)],
+        headers,
         Json(PollResponse {
             status: "done",
             interval: None,
