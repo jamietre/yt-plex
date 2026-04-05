@@ -2559,6 +2559,7 @@ dependencies = [
  "tracing-subscriber",
  "urlencoding",
  "uuid",
+ "walkdir",
  "yt-plex-common",
 ]
 

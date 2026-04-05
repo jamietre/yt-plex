@@ -1,0 +1,14 @@
+services:
+  yt-plex:
+    image: yt-plex:latest
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config:/config          # put your config.toml here
+      - yt-plex-data:/data        # SQLite DB + thumbnail cache
+      - /path/to/plex/media:/media # your Plex media directory
+
+volumes:
+  yt-plex-data:
