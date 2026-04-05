@@ -1,0 +1,220 @@
+use anyhow::{Context, Result};
+use chrono::Utc;
+use std::path::Path;
+use std::time::Duration;
+use tokio::io::AsyncBufReadExt;
+use tokio::process::Command;
+use tracing::{error, info, warn};
+use yt_plex_common::config::Config;
+
+use crate::db::Db;
+
+#[derive(Debug, PartialEq)]
+pub struct FlatPlaylistEntry {
+    pub youtube_id: String,
+    pub title: String,
+    pub published_at: Option<String>,
+}
+
+/// Parse one line of yt-dlp --flat-playlist --print "%(id)s\t%(title)s\t%(upload_date)s" output.
+pub fn parse_flat_playlist_line(line: &str) -> Option<FlatPlaylistEntry> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    let mut parts = line.splitn(3, '\t');
+    let youtube_id = parts.next()?.trim().to_string();
+    if youtube_id.is_empty() {
+        return None;
+    }
+    let title = parts.next().unwrap_or("").trim().to_string();
+    let date_raw = parts.next().unwrap_or("").trim();
+    // yt-dlp upload_date format is YYYYMMDD; convert to YYYY-MM-DD
+    let published_at = parse_upload_date(date_raw);
+    Some(FlatPlaylistEntry { youtube_id, title, published_at })
+}
+
+fn parse_upload_date(s: &str) -> Option<String> {
+    if s.len() == 8 && s.chars().all(|c| c.is_ascii_digit()) {
+        Some(format!("{}-{}-{}", &s[0..4], &s[4..6], &s[6..8]))
+    } else {
+        None
+    }
+}
+
+/// Extract a YouTube video ID from `[youtube_id]` suffix in a filename stem.
+/// Uses the last `[...]` bracket pair found.
+pub fn extract_youtube_id_from_path(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_str()?;
+    let open = stem.rfind('[')?;
+    let close = stem.rfind(']')?;
+    if close > open + 1 {
+        Some(stem[open + 1..close].to_string())
+    } else {
+        None
+    }
+}
+
+/// Sync one channel: run yt-dlp flat-playlist and upsert videos into DB.
+pub async fn sync_channel(
+    channel_id: &str,
+    channel_url: &str,
+    db: &Db,
+    config: &Config,
+    is_first_sync: bool,
+) -> Result<()> {
+    info!("syncing channel {channel_url} (first={is_first_sync})");
+
+    let mut args = vec![
+        "--flat-playlist".to_string(),
+        "--print".to_string(),
+        "%(id)s\t%(title)s\t%(upload_date)s".to_string(),
+        "--no-warnings".to_string(),
+    ];
+    if !is_first_sync && config.sync.playlist_items > 0 {
+        args.push("--playlist-items".to_string());
+        args.push(format!("1:{}", config.sync.playlist_items));
+    }
+    args.push(channel_url.to_string());
+
+    let mut child = Command::new("yt-dlp")
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .context("spawning yt-dlp for channel sync")?;
+
+    let stdout = child.stdout.take().expect("stdout piped");
+    let mut lines = tokio::io::BufReader::new(stdout).lines();
+    let now = Utc::now().to_rfc3339();
+    let mut count = 0usize;
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        if let Some(entry) = parse_flat_playlist_line(&line) {
+            db.upsert_video(
+                &entry.youtube_id,
+                channel_id,
+                &entry.title,
+                entry.published_at.as_deref(),
+                &now,
+            )
+            .context("upserting video")?;
+            count += 1;
+        }
+    }
+
+    child.wait().await.context("waiting for yt-dlp")?;
+    db.set_channel_synced(channel_id, &now)?;
+    info!("synced {count} videos for {channel_url}");
+    Ok(())
+}
+
+/// Walk base_path and set downloaded_at on any video whose youtube_id appears
+/// in a filename as `[youtube_id]`.
+pub fn scan_filesystem(base_path: &str, db: &Db) -> Result<()> {
+    let now = Utc::now().to_rfc3339();
+    let mut found = 0usize;
+    for entry in walkdir::WalkDir::new(base_path)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        if let Some(youtube_id) = extract_youtube_id_from_path(entry.path()) {
+            if db.video_exists(&youtube_id)? {
+                db.set_video_downloaded(&youtube_id, &now)?;
+                found += 1;
+            }
+        }
+    }
+    info!("filesystem scan: {found} videos marked as downloaded");
+    Ok(())
+}
+
+/// Background sync loop — runs forever, cycling through all channels every interval_hours.
+pub async fn run_sync_loop(db: std::sync::Arc<Db>, config: std::sync::Arc<std::sync::RwLock<Config>>) {
+    loop {
+        let (interval_hours, base_path) = {
+            let cfg = config.read().unwrap();
+            (cfg.sync.interval_hours, cfg.output.base_path.clone())
+        };
+
+        let channels = db.list_channels().unwrap_or_default();
+        for channel in channels {
+            let is_first = channel.last_synced_at.is_none();
+            let cfg = config.read().unwrap().clone();
+            if let Err(e) = sync_channel(&channel.id, &channel.youtube_channel_url, &db, &cfg, is_first).await {
+                error!("sync failed for {}: {e:#}", channel.youtube_channel_url);
+            }
+        }
+
+        if let Err(e) = scan_filesystem(&base_path, &db) {
+            warn!("filesystem scan failed: {e:#}");
+        }
+
+        tokio::time::sleep(Duration::from_secs(interval_hours * 3600)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn parse_flat_playlist_line_happy_path() {
+        let entry = parse_flat_playlist_line("dQw4w9WgXcQ\tNever Gonna Give You Up\t19870727");
+        assert_eq!(
+            entry,
+            Some(FlatPlaylistEntry {
+                youtube_id: "dQw4w9WgXcQ".into(),
+                title: "Never Gonna Give You Up".into(),
+                published_at: Some("1987-07-27".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_flat_playlist_line_missing_date() {
+        let entry = parse_flat_playlist_line("abc123\tSome Video\tNA");
+        assert_eq!(
+            entry,
+            Some(FlatPlaylistEntry {
+                youtube_id: "abc123".into(),
+                title: "Some Video".into(),
+                published_at: None,
+            })
+        );
+    }
+
+    #[test]
+    fn parse_flat_playlist_line_blank() {
+        assert_eq!(parse_flat_playlist_line(""), None);
+        assert_eq!(parse_flat_playlist_line("   "), None);
+    }
+
+    #[test]
+    fn extract_youtube_id_finds_bracket_suffix() {
+        let path = Path::new("/plex/Chan/2026-04-05 - Some Video [dQw4w9WgXcQ].mp4");
+        assert_eq!(
+            extract_youtube_id_from_path(path),
+            Some("dQw4w9WgXcQ".into())
+        );
+    }
+
+    #[test]
+    fn extract_youtube_id_returns_none_without_bracket() {
+        let path = Path::new("/plex/Chan/2026-04-05 - Some Video.mp4");
+        assert_eq!(extract_youtube_id_from_path(path), None);
+    }
+
+    #[test]
+    fn extract_youtube_id_handles_multiple_brackets() {
+        // Should use the last [...]
+        let path = Path::new("/plex/Chan/Video [playlist] [abc123def45].mp4");
+        assert_eq!(
+            extract_youtube_id_from_path(path),
+            Some("abc123def45".into())
+        );
+    }
+}
