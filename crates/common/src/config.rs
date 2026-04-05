@@ -100,5 +100,9 @@ path_template = "{channel}/{date} - {title}.{ext}"
         assert_eq!(config.auth.admin_emails, vec!["admin@example.com"]);
         assert_eq!(config.google_oauth.client_id, "fake_client_id");
         assert_eq!(config.plex.library_section_id, "1");
+        assert_eq!(
+            config.output.path_template,
+            "{channel}/{date} - {title}.{ext}"
+        );
     }
 }
