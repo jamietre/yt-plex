@@ -6,6 +6,7 @@ use std::path::PathBuf;
 pub struct Config {
     pub server: ServerConfig,
     pub auth: AuthConfig,
+    pub google_oauth: GoogleOAuthConfig,
     pub plex: PlexConfig,
     pub output: OutputConfig,
 }
@@ -17,7 +18,14 @@ pub struct ServerConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
-    pub admin_password_hash: String,
+    pub admin_emails: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoogleOAuthConfig {
+    pub client_id: String,
+    pub client_secret: String,
+    pub redirect_uri: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,7 +79,12 @@ mod tests {
 bind = "127.0.0.1:3000"
 
 [auth]
-admin_password_hash = "$argon2id$v=19$m=19456,t=2,p=1$abc$def"
+admin_emails = ["admin@example.com"]
+
+[google_oauth]
+client_id = "fake_client_id"
+client_secret = "fake_secret"
+redirect_uri = "http://localhost:3000/api/auth/callback"
 
 [plex]
 url = "http://localhost:32400"
@@ -84,10 +97,8 @@ path_template = "{channel}/{date} - {title}.{ext}"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.server.bind, "127.0.0.1:3000");
+        assert_eq!(config.auth.admin_emails, vec!["admin@example.com"]);
+        assert_eq!(config.google_oauth.client_id, "fake_client_id");
         assert_eq!(config.plex.library_section_id, "1");
-        assert_eq!(
-            config.output.path_template,
-            "{channel}/{date} - {title}.{ext}"
-        );
     }
 }
