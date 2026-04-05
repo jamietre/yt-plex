@@ -9,7 +9,7 @@ pub mod ws;
 
 use anyhow::{bail, Result};
 use axum::{
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     Router,
 };
 use std::collections::HashMap;
@@ -92,6 +92,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/jobs", get(routes::jobs::list_jobs))
         .route("/api/settings", get(routes::settings::get_settings))
         .route("/api/settings", put(routes::settings::update_settings))
+        .route("/api/channels", get(routes::channels::list_channels))
+        .route("/api/channels", post(routes::channels::add_channel))
+        .route("/api/channels/:id", delete(routes::channels::delete_channel))
+        .route("/api/channels/:id/sync", post(routes::channels::sync_channel))
+        .route("/api/channels/:id/videos", get(routes::channels::list_channel_videos))
+        .route("/api/videos/:youtube_id/ignore", post(routes::videos::ignore_video))
+        .route("/api/videos/:youtube_id/ignore", delete(routes::videos::unignore_video))
         .route("/ws", get(ws::ws_handler))
         .fallback(routes::assets::serve_asset)
         .with_state(state)
