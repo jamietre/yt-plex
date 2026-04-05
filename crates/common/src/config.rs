@@ -25,7 +25,6 @@ pub struct AuthConfig {
 pub struct GoogleOAuthConfig {
     pub client_id: String,
     pub client_secret: String,
-    pub redirect_uri: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,7 +83,6 @@ admin_emails = ["admin@example.com"]
 [google_oauth]
 client_id = "fake_client_id"
 client_secret = "fake_secret"
-redirect_uri = "http://localhost:3000/api/auth/callback"
 
 [plex]
 url = "http://localhost:32400"
