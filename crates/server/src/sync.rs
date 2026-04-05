@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
+use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
@@ -53,6 +54,31 @@ pub fn extract_youtube_id_from_path(path: &Path) -> Option<String> {
     } else {
         None
     }
+}
+
+#[derive(Deserialize)]
+struct YtDlpVideoMeta {
+    description: Option<String>,
+}
+
+/// Fetch the description for a single video by calling yt-dlp -j.
+/// Runs synchronously (blocking tokio task). Takes ~2–5 seconds.
+pub async fn fetch_video_description(youtube_id: &str) -> Result<String> {
+    let url = format!("https://www.youtube.com/watch?v={youtube_id}");
+    let output = Command::new("yt-dlp")
+        .args(["--no-playlist", "-j", &url])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .await
+        .context("spawning yt-dlp for description fetch")?;
+
+    if !output.status.success() {
+        anyhow::bail!("yt-dlp exited with status {}", output.status);
+    }
+    let meta: YtDlpVideoMeta = serde_json::from_slice(&output.stdout)
+        .context("parsing yt-dlp JSON")?;
+    Ok(meta.description.unwrap_or_default())
 }
 
 /// Sync one channel: run yt-dlp flat-playlist and upsert videos into DB.
@@ -216,5 +242,19 @@ mod tests {
             extract_youtube_id_from_path(path),
             Some("abc123def45".into())
         );
+    }
+
+    #[test]
+    fn parse_description_from_json() {
+        let json = r#"{"id":"abc","title":"Test","description":"Hello world"}"#;
+        let meta: YtDlpVideoMeta = serde_json::from_str(json).unwrap();
+        assert_eq!(meta.description.as_deref(), Some("Hello world"));
+    }
+
+    #[test]
+    fn parse_description_missing_returns_none() {
+        let json = r#"{"id":"abc","title":"Test"}"#;
+        let meta: YtDlpVideoMeta = serde_json::from_str(json).unwrap();
+        assert!(meta.description.is_none());
     }
 }
