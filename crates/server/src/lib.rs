@@ -13,7 +13,7 @@ use axum::{
 };
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
-use yt_plex_common::config::{load_config, Config};
+use yt_plex_common::config::Config;
 
 use crate::{db::Db, ws::WsHub};
 
