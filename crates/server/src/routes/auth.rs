@@ -148,7 +148,15 @@ pub async fn device_poll(
         states.retain(|_, e| e.expires_at > Instant::now());
     }
 
-    let (google_device_code, client_id, client_secret) = {
+    let (client_id, client_secret) = {
+        let cfg = state.config.read().unwrap();
+        (
+            cfg.google_oauth.client_id.clone(),
+            cfg.google_oauth.client_secret.clone(),
+        )
+    };
+
+    let (google_device_code, stored_interval) = {
         let states = state.oauth_states.lock().unwrap();
         match states.get(&params.token) {
             None => {
@@ -159,14 +167,7 @@ pub async fn device_poll(
                 })
                 .into_response();
             }
-            Some(entry) => {
-                let cfg = state.config.read().unwrap();
-                (
-                    entry.google_device_code.clone(),
-                    cfg.google_oauth.client_id.clone(),
-                    cfg.google_oauth.client_secret.clone(),
-                )
-            }
+            Some(entry) => (entry.google_device_code.clone(), entry.interval),
         }
     };
 
@@ -223,7 +224,7 @@ pub async fn device_poll(
         Some("slow_down") => {
             return Json(PollResponse {
                 status: "pending",
-                interval: google_token.interval,
+                interval: Some(google_token.interval.unwrap_or(stored_interval)),
                 message: None,
             })
             .into_response();
@@ -368,6 +369,6 @@ pub async fn logout(
     if let Some(t) = token {
         let _ = state.db.delete_session(&t);
     }
-    let clear = "session=; Path=/; HttpOnly; Max-Age=0";
+    let clear = "session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0";
     (StatusCode::OK, [(header::SET_COOKIE, clear)], "OK")
 }
