@@ -1,5 +1,6 @@
 <script lang="ts">
     import { logout } from '$lib/api';
+    import { page } from '$app/stores';
     import type { Snippet } from 'svelte';
 
     let { children }: { children: Snippet } = $props();
@@ -10,11 +11,13 @@
     }
 </script>
 
+{#if $page.url.pathname !== '/login'}
 <nav>
     <a href="/">Jobs</a>
     <a href="/settings">Settings</a>
     <button onclick={handleLogout}>Log out</button>
 </nav>
+{/if}
 
 {@render children()}
 
