@@ -111,8 +111,8 @@ pub async fn list_channel_videos(
         params.filter.as_deref().unwrap_or("new"),
     );
     let show_ignored = params.show_ignored.unwrap_or(false);
-    match state.db.list_videos_for_channel(&id, filter, show_ignored) {
-        Ok(videos) => Json(videos).into_response(),
+    match state.db.list_videos_for_channel(&id, filter, show_ignored, None, 50, 0) {
+        Ok(page) => Json(page).into_response(),
         Err(e) => {
             error!("list_videos_for_channel: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, "Server error").into_response()

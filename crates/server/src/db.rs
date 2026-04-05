@@ -3,7 +3,7 @@ use chrono::Utc;
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
-use yt_plex_common::models::{Channel, Job, JobStatus, Video, VideoFilter, VideoStatus};
+use yt_plex_common::models::{Channel, Job, JobStatus, Video, VideoFilter, VideoPage, VideoStatus};
 
 #[derive(Clone)]
 pub struct Db {
@@ -242,25 +242,8 @@ impl Db {
         Ok(count > 0)
     }
 
-    pub fn list_videos_for_channel(
-        &self,
-        channel_id: &str,
-        filter: VideoFilter,
-        show_ignored: bool,
-    ) -> Result<Vec<Video>> {
+    pub fn get_video(&self, youtube_id: &str) -> Result<Option<Video>> {
         let active_job_subq = "EXISTS(SELECT 1 FROM jobs WHERE url = 'https://www.youtube.com/watch?v=' || v.youtube_id AND status IN ('queued','downloading','copying'))";
-        let ignore_cond = if show_ignored { "1=1" } else { "v.ignored_at IS NULL" };
-
-        let filter_cond = match filter {
-            VideoFilter::New => format!(
-                "NOT {active_job_subq} AND v.downloaded_at IS NULL AND ({ignore_cond})"
-            ),
-            VideoFilter::Downloaded => format!(
-                "({active_job_subq} OR v.downloaded_at IS NOT NULL) AND ({ignore_cond})"
-            ),
-            VideoFilter::All => ignore_cond.to_string(),
-        };
-
         let sql = format!(
             "SELECT v.youtube_id, v.channel_id, v.title, v.published_at,
                     v.downloaded_at, v.last_seen_at, v.ignored_at,
@@ -269,16 +252,14 @@ impl Db {
                         WHEN v.downloaded_at IS NOT NULL THEN 'downloaded'
                         WHEN v.ignored_at IS NOT NULL THEN 'ignored'
                         ELSE 'new'
-                    END as derived_status
+                    END as derived_status,
+                    v.description
              FROM videos v
-             WHERE v.channel_id = ?1
-               AND ({filter_cond})
-             ORDER BY v.published_at DESC NULLS LAST, v.last_seen_at DESC"
+             WHERE v.youtube_id = ?1"
         );
-
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(rusqlite::params![channel_id], |row| {
+        let mut rows = stmt.query_map(rusqlite::params![youtube_id], |row| {
             let status_str: String = row.get(7)?;
             let status = match status_str.as_str() {
                 "in_progress" => VideoStatus::InProgress,
@@ -295,10 +276,95 @@ impl Db {
                 last_seen_at: row.get(5)?,
                 ignored_at: row.get(6)?,
                 status,
-                description: None,  // populated lazily on detail page visit
+                description: row.get(8)?,
             })
         })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        rows.next().transpose().map_err(Into::into)
+    }
+
+    pub fn set_video_description(&self, youtube_id: &str, description: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE videos SET description = ?1 WHERE youtube_id = ?2",
+            rusqlite::params![description, youtube_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_videos_for_channel(
+        &self,
+        channel_id: &str,
+        filter: VideoFilter,
+        show_ignored: bool,
+        search: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<VideoPage> {
+        let active_job_subq = "EXISTS(SELECT 1 FROM jobs WHERE url = 'https://www.youtube.com/watch?v=' || v.youtube_id AND status IN ('queued','downloading','copying'))";
+        let ignore_cond = if show_ignored { "1=1" } else { "v.ignored_at IS NULL" };
+
+        let filter_cond = match filter {
+            VideoFilter::New => format!(
+                "NOT {active_job_subq} AND v.downloaded_at IS NULL AND ({ignore_cond})"
+            ),
+            VideoFilter::Downloaded => format!(
+                "({active_job_subq} OR v.downloaded_at IS NOT NULL) AND ({ignore_cond})"
+            ),
+            VideoFilter::All => ignore_cond.to_string(),
+        };
+
+        // ?2 IS NULL short-circuits before MATCH is evaluated, so NULL search is safe.
+        let sql = format!(
+            "SELECT v.youtube_id, v.channel_id, v.title, v.published_at,
+                    v.downloaded_at, v.last_seen_at, v.ignored_at,
+                    CASE
+                        WHEN {active_job_subq} THEN 'in_progress'
+                        WHEN v.downloaded_at IS NOT NULL THEN 'downloaded'
+                        WHEN v.ignored_at IS NOT NULL THEN 'ignored'
+                        ELSE 'new'
+                    END as derived_status,
+                    v.description
+             FROM videos v
+             WHERE v.channel_id = ?1
+               AND (?2 IS NULL OR v.rowid IN (SELECT rowid FROM videos_fts WHERE videos_fts MATCH ?2))
+               AND ({filter_cond})
+             ORDER BY v.published_at DESC NULLS LAST, v.last_seen_at DESC
+             LIMIT ?3 OFFSET ?4"
+        );
+
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&sql)?;
+        // Fetch limit+1 to detect whether there are more pages.
+        let fetch_limit = (limit + 1) as i64;
+        let rows = stmt.query_map(
+            rusqlite::params![channel_id, search, fetch_limit, offset as i64],
+            |row| {
+                let status_str: String = row.get(7)?;
+                let status = match status_str.as_str() {
+                    "in_progress" => VideoStatus::InProgress,
+                    "downloaded" => VideoStatus::Downloaded,
+                    "ignored" => VideoStatus::Ignored,
+                    _ => VideoStatus::New,
+                };
+                Ok(Video {
+                    youtube_id: row.get(0)?,
+                    channel_id: row.get(1)?,
+                    title: row.get(2)?,
+                    published_at: row.get(3)?,
+                    downloaded_at: row.get(4)?,
+                    last_seen_at: row.get(5)?,
+                    ignored_at: row.get(6)?,
+                    status,
+                    description: row.get(8)?,
+                })
+            },
+        )?;
+        let mut videos: Vec<Video> = rows.collect::<Result<_, _>>()?;
+        let has_more = videos.len() > limit;
+        if has_more {
+            videos.pop();
+        }
+        Ok(VideoPage { videos, has_more })
     }
 }
 
@@ -541,7 +607,8 @@ mod tests {
         let db = test_db();
         let ch = insert_test_channel(&db);
         db.upsert_video("abc123", &ch.id, "Test Video", Some("2026-01-01"), "2026-04-05T00:00:00Z").unwrap();
-        let videos = db.list_videos_for_channel(&ch.id, VideoFilter::All, false).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 50, 0).unwrap();
+        let videos = page.videos;
         assert_eq!(videos.len(), 1);
         assert_eq!(videos[0].youtube_id, "abc123");
         assert_eq!(videos[0].status, VideoStatus::New);
@@ -553,9 +620,11 @@ mod tests {
         let ch = insert_test_channel(&db);
         db.upsert_video("abc123", &ch.id, "Test Video", None, "2026-04-05T00:00:00Z").unwrap();
         db.set_video_downloaded("abc123", "2026-04-05T12:00:00Z").unwrap();
-        let new_videos = db.list_videos_for_channel(&ch.id, VideoFilter::New, false).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::New, false, None, 50, 0).unwrap();
+        let new_videos = page.videos;
         assert_eq!(new_videos.len(), 0);
-        let downloaded = db.list_videos_for_channel(&ch.id, VideoFilter::Downloaded, false).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::Downloaded, false, None, 50, 0).unwrap();
+        let downloaded = page.videos;
         assert_eq!(downloaded.len(), 1);
         assert_eq!(downloaded[0].status, VideoStatus::Downloaded);
     }
@@ -566,9 +635,11 @@ mod tests {
         let ch = insert_test_channel(&db);
         db.upsert_video("xyz789", &ch.id, "Another Video", None, "2026-04-05T00:00:00Z").unwrap();
         db.ignore_video("xyz789", "2026-04-05T12:00:00Z").unwrap();
-        let new_videos = db.list_videos_for_channel(&ch.id, VideoFilter::New, false).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::New, false, None, 50, 0).unwrap();
+        let new_videos = page.videos;
         assert_eq!(new_videos.len(), 0);
-        let with_ignored = db.list_videos_for_channel(&ch.id, VideoFilter::New, true).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::New, true, None, 50, 0).unwrap();
+        let with_ignored = page.videos;
         assert_eq!(with_ignored.len(), 1);
         assert_eq!(with_ignored[0].status, VideoStatus::Ignored);
     }
@@ -580,7 +651,8 @@ mod tests {
         db.upsert_video("vid1", &ch.id, "Video", None, "2026-04-05T00:00:00Z").unwrap();
         db.ignore_video("vid1", "2026-04-05T12:00:00Z").unwrap();
         db.unignore_video("vid1").unwrap();
-        let new_videos = db.list_videos_for_channel(&ch.id, VideoFilter::New, false).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::New, false, None, 50, 0).unwrap();
+        let new_videos = page.videos;
         assert_eq!(new_videos.len(), 1);
         assert_eq!(new_videos[0].status, VideoStatus::New);
     }
@@ -591,7 +663,8 @@ mod tests {
         let ch = insert_test_channel(&db);
         db.upsert_video("old", &ch.id, "Old Video", Some("2025-01-01"), "2026-04-05T00:00:00Z").unwrap();
         db.upsert_video("new", &ch.id, "New Video", Some("2026-01-01"), "2026-04-05T00:00:00Z").unwrap();
-        let videos = db.list_videos_for_channel(&ch.id, VideoFilter::All, false).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 50, 0).unwrap();
+        let videos = page.videos;
         assert_eq!(videos[0].youtube_id, "new");
         assert_eq!(videos[1].youtube_id, "old");
     }
@@ -603,9 +676,11 @@ mod tests {
         db.upsert_video("v1", &ch.id, "V1", None, "2026-04-05T00:00:00Z").unwrap();
         db.upsert_video("v2", &ch.id, "V2", None, "2026-04-05T00:00:00Z").unwrap();
         db.ignore_video("v2", "2026-04-05T12:00:00Z").unwrap();
-        let all = db.list_videos_for_channel(&ch.id, VideoFilter::All, false).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 50, 0).unwrap();
+        let all = page.videos;
         assert_eq!(all.len(), 1);
-        let all_with_ignored = db.list_videos_for_channel(&ch.id, VideoFilter::All, true).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, true, None, 50, 0).unwrap();
+        let all_with_ignored = page.videos;
         assert_eq!(all_with_ignored.len(), 2);
     }
 
@@ -627,7 +702,8 @@ mod tests {
         db.set_video_downloaded("abc123", "2026-04-05T06:00:00Z").unwrap();
         // Upsert again with updated title and last_seen_at
         db.upsert_video("abc123", &ch.id, "Updated Title", None, "2026-04-05T12:00:00Z").unwrap();
-        let videos = db.list_videos_for_channel(&ch.id, VideoFilter::Downloaded, false).unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::Downloaded, false, None, 50, 0).unwrap();
+        let videos = page.videos;
         assert_eq!(videos.len(), 1);
         assert_eq!(videos[0].title, "Updated Title");
         assert_eq!(videos[0].last_seen_at, "2026-04-05T12:00:00Z");
@@ -665,5 +741,50 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn get_video_returns_none_for_missing() {
+        let db = test_db();
+        assert!(db.get_video("nonexistent").unwrap().is_none());
+    }
+
+    #[test]
+    fn set_video_description_and_get_video() {
+        let db = test_db();
+        let ch = insert_test_channel(&db);
+        db.upsert_video("vid1", &ch.id, "My Video", None, "2026-04-05T00:00:00Z").unwrap();
+        db.set_video_description("vid1", "A great description").unwrap();
+        let v = db.get_video("vid1").unwrap().unwrap();
+        assert_eq!(v.description.as_deref(), Some("A great description"));
+        assert_eq!(v.title, "My Video");
+    }
+
+    #[test]
+    fn list_videos_search_filters_by_title() {
+        let db = test_db();
+        let ch = insert_test_channel(&db);
+        db.upsert_video("v1", &ch.id, "Rust Programming", None, "2026-04-05T00:00:00Z").unwrap();
+        db.upsert_video("v2", &ch.id, "Python Cooking", None, "2026-04-05T00:00:00Z").unwrap();
+        let page = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, Some("Rust"), 50, 0).unwrap();
+        assert_eq!(page.videos.len(), 1);
+        assert_eq!(page.videos[0].youtube_id, "v1");
+        assert!(!page.has_more);
+    }
+
+    #[test]
+    fn list_videos_pagination_works() {
+        let db = test_db();
+        let ch = insert_test_channel(&db);
+        for i in 0..5 {
+            db.upsert_video(&format!("v{i}"), &ch.id, &format!("Video {i}"), None, "2026-04-05T00:00:00Z").unwrap();
+        }
+        let page1 = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 3, 0).unwrap();
+        assert_eq!(page1.videos.len(), 3);
+        assert!(page1.has_more);
+
+        let page2 = db.list_videos_for_channel(&ch.id, VideoFilter::All, false, None, 3, 3).unwrap();
+        assert_eq!(page2.videos.len(), 2);
+        assert!(!page2.has_more);
     }
 }
