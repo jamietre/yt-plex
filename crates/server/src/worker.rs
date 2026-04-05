@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc, time::Duration};
+use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
 use tracing::{error, info, warn};
 use yt_plex_common::{config::Config, models::JobStatus};
@@ -18,6 +19,15 @@ pub struct YtDlpMeta {
 
 pub fn parse_ytdlp_json(json: &str) -> Result<YtDlpMeta> {
     serde_json::from_str(json).context("parsing yt-dlp JSON output")
+}
+
+/// Extract download percentage from a yt-dlp stderr progress line.
+/// Matches lines like: `[download]  23.5% of 45.23MiB at 2.34MiB/s ETA 00:16`
+pub fn parse_progress(line: &str) -> Option<f32> {
+    let line = line.trim();
+    let rest = line.strip_prefix("[download]")?.trim();
+    let pct_str = rest.split('%').next()?.trim();
+    pct_str.parse::<f32>().ok()
 }
 
 /// Spawns the background download loop. Runs forever until the process exits.
@@ -53,19 +63,41 @@ async fn tick(
         .to_string_lossy()
         .into_owned();
 
-    // Run yt-dlp
-    let output = Command::new("yt-dlp")
-        .args(["--print-json", "-o", &out_template, &job.url])
-        .output()
-        .await
+    // Run yt-dlp, streaming stderr for progress updates
+    let mut child = Command::new("yt-dlp")
+        .args(["--newline", "--print-json", "-o", &out_template, &job.url])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .context("spawning yt-dlp (is it installed?)")?;
 
+    let stderr_pipe = child.stderr.take().expect("stderr piped");
+    let mut stderr_lines = tokio::io::BufReader::new(stderr_pipe).lines();
+    let mut stderr_buf = String::new();
+
+    // Stream stderr: parse progress lines and broadcast, accumulate the rest
+    while let Ok(Some(line)) = stderr_lines.next_line().await {
+        if let Some(pct) = parse_progress(&line) {
+            hub.broadcast(&yt_plex_common::models::WsMessage {
+                job_id: job.id.clone(),
+                status: JobStatus::Downloading,
+                channel_name: None,
+                title: None,
+                error: None,
+                progress: Some(pct),
+            });
+        }
+        stderr_buf.push_str(&line);
+        stderr_buf.push('\n');
+    }
+
+    let output = child.wait_with_output().await.context("waiting for yt-dlp")?;
+
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        db.update_job(&job.id, JobStatus::Failed, None, None, Some(&stderr))?;
+        db.update_job(&job.id, JobStatus::Failed, None, None, Some(&stderr_buf))?;
         let updated = db.get_job(&job.id)?.unwrap();
         hub.broadcast(&yt_plex_common::models::WsMessage::from_job(&updated));
-        warn!("yt-dlp failed for {}: {stderr}", job.id);
+        warn!("yt-dlp failed for {}: {stderr_buf}", job.id);
         return Ok(());
     }
 
@@ -157,5 +189,20 @@ mod tests {
         assert_eq!(meta.title, "My Video");
         assert_eq!(meta.ext, "mp4");
         assert_eq!(meta.id, "abc123");
+    }
+
+    #[test]
+    fn parse_progress_extracts_percentage() {
+        assert_eq!(
+            parse_progress("[download]  23.5% of 45.23MiB at 2.34MiB/s ETA 00:16"),
+            Some(23.5)
+        );
+        assert_eq!(
+            parse_progress("[download] 100% of 10.00MiB at 5.00MiB/s ETA 00:00"),
+            Some(100.0)
+        );
+        assert_eq!(parse_progress("[download] Destination: video.mp4"), None);
+        assert_eq!(parse_progress("[info] some other line"), None);
+        assert_eq!(parse_progress("  0.0% something"), None); // no [download] prefix
     }
 }
