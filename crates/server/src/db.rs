@@ -360,11 +360,37 @@ CREATE TABLE IF NOT EXISTS videos (
     published_at  TEXT,
     downloaded_at TEXT,
     last_seen_at  TEXT NOT NULL,
-    ignored_at    TEXT
+    ignored_at    TEXT,
+    description   TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_videos_channel_id ON videos(channel_id);
 CREATE INDEX IF NOT EXISTS idx_videos_published_at ON videos(published_at DESC);
+
+-- FTS5 virtual table for title+description search (content-table backed, triggers keep in sync)
+CREATE VIRTUAL TABLE IF NOT EXISTS videos_fts USING fts5(
+    title,
+    description,
+    content=videos,
+    content_rowid=rowid
+);
+
+CREATE TRIGGER IF NOT EXISTS videos_fts_insert AFTER INSERT ON videos BEGIN
+    INSERT INTO videos_fts(rowid, title, description)
+    VALUES (new.rowid, new.title, new.description);
+END;
+
+CREATE TRIGGER IF NOT EXISTS videos_fts_update AFTER UPDATE ON videos BEGIN
+    INSERT INTO videos_fts(videos_fts, rowid, title, description)
+    VALUES ('delete', old.rowid, old.title, old.description);
+    INSERT INTO videos_fts(rowid, title, description)
+    VALUES (new.rowid, new.title, new.description);
+END;
+
+CREATE TRIGGER IF NOT EXISTS videos_fts_delete AFTER DELETE ON videos BEGIN
+    INSERT INTO videos_fts(videos_fts, rowid, title, description)
+    VALUES ('delete', old.rowid, old.title, old.description);
+END;
 ";
 
 #[cfg(test)]
@@ -607,5 +633,37 @@ mod tests {
         assert_eq!(videos[0].last_seen_at, "2026-04-05T12:00:00Z");
         // downloaded_at must not be overwritten by the upsert
         assert_eq!(videos[0].downloaded_at.as_deref(), Some("2026-04-05T06:00:00Z"));
+    }
+
+    #[test]
+    fn fts_table_exists() {
+        let db = test_db();
+        let conn = db.conn.lock().unwrap();
+        // FTS5 tables appear in sqlite_master as a table
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='videos_fts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn fts_indexes_on_insert() {
+        let db = test_db();
+        let ch = insert_test_channel(&db);
+        db.upsert_video("fts1", &ch.id, "Rust Programming Tutorial", None, "2026-04-05T00:00:00Z").unwrap();
+        // FTS search should find it by title keyword
+        let conn = db.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM videos_fts WHERE videos_fts MATCH 'Programming'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
     }
 }
