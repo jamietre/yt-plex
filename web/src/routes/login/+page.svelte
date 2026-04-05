@@ -7,11 +7,22 @@
     let deviceInfo = $state<DeviceLoginResponse | null>(null);
     let errorMsg = $state('');
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let networkErrors = 0;
+    const MAX_NETWORK_ERRORS = 5;
+
+    function cancelPoll() {
+        if (pollTimer !== null) {
+            clearTimeout(pollTimer);
+            pollTimer = null;
+        }
+    }
 
     async function startLogin() {
+        cancelPoll();
         phase = 'idle';
         errorMsg = '';
         deviceInfo = null;
+        networkErrors = 0;
         try {
             deviceInfo = await startDeviceLogin();
             phase = 'waiting';
@@ -30,6 +41,7 @@
         if (!deviceInfo) return;
         try {
             const result = await pollDeviceAuth(deviceInfo.poll_token);
+            networkErrors = 0;
             if (result.status === 'pending') {
                 schedulePoll(result.interval ?? deviceInfo.interval);
             } else if (result.status === 'done') {
@@ -43,7 +55,13 @@
                 errorMsg = result.message ?? 'Sign-in failed. Please try again.';
             }
         } catch {
-            schedulePoll(deviceInfo.interval);
+            networkErrors++;
+            if (networkErrors >= MAX_NETWORK_ERRORS) {
+                phase = 'error';
+                errorMsg = 'Lost connection to server. Please try again.';
+            } else {
+                schedulePoll(deviceInfo.interval);
+            }
         }
     }
 </script>
