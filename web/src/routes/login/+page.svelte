@@ -74,8 +74,8 @@
         <button onclick={startLogin}>Sign in with Google</button>
 
     {:else if phase === 'waiting' && deviceInfo}
-        <p>Open the following URL and enter the code below:</p>
-        <p><a href={deviceInfo.verification_url} target="_blank" rel="noreferrer">{deviceInfo.verification_url}</a></p>
+        <p>Click the link below to sign in:</p>
+        <p><a href="{deviceInfo.verification_url}?user_code={deviceInfo.user_code}" target="_blank" rel="noreferrer">Sign in with Google ↗</a></p>
         <p class="code">{deviceInfo.user_code}</p>
         <p class="hint">Waiting for authorisation…</p>
 
