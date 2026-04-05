@@ -5,24 +5,33 @@ Download YouTube videos via yt-dlp and sync them to your Plex media server.
 ## Prerequisites
 
 - [Rust](https://rustup.rs/) (stable)
-- [Node.js](https://nodejs.org/) 18+ (for building the web UI)
+- [mise](https://mise.jdx.dev/) (manages Node.js and pnpm versions)
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) on your `PATH`
 - A running Plex Media Server
 
 ## Setup
 
-### 1. Build the web UI
+### 1. Install Node.js tooling via mise
 
 ```bash
-cd web && npm install && npm run build && cd ..
+mise install
 ```
 
-### 2. Build the binary
+### 2. Build everything
 
 ```bash
-cargo build --release -p yt-plex-server
-# Binary is at: target/release/yt-plex
+mise run build
 ```
+
+This installs web dependencies, builds the SvelteKit UI, then compiles the Rust binary.
+
+The binary lands at `target/release/yt-plex`.
+
+> **Manual steps (if not using mise):**
+> ```bash
+> cd web && pnpm install && pnpm build && cd ..
+> cargo build --release -p yt-plex-server
+> ```
 
 ### 3. Create a config file
 
@@ -82,10 +91,10 @@ Open `http://localhost:3000` in your browser.
 
 ```bash
 # Run backend (watches for changes with cargo-watch):
-cargo watch -x 'run -p yt-plex-server'
+mise run dev-server
 
 # Run frontend dev server (proxies API to backend):
-cd web && npm run dev
+mise run web-dev
 ```
 
 ## Notes

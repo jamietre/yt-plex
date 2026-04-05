@@ -1,0 +1,27 @@
+[tools]
+node = "24"
+pnpm = "10"
+
+[tasks.web-install]
+description = "Install web dependencies"
+run = "pnpm install"
+dir = "web"
+
+[tasks.web-build]
+description = "Build the web UI"
+run = "pnpm build"
+dir = "web"
+
+[tasks.web-dev]
+description = "Run the frontend dev server"
+run = "pnpm dev"
+dir = "web"
+
+[tasks.build]
+description = "Build everything (web UI then Rust binary)"
+depends = ["web-build"]
+run = "cargo build --release -p yt-plex-server"
+
+[tasks.dev-server]
+description = "Run backend with auto-reload (requires cargo-watch)"
+run = "cargo watch -x 'run -p yt-plex-server'"
