@@ -9,6 +9,8 @@ pub struct Config {
     pub google_oauth: GoogleOAuthConfig,
     pub plex: PlexConfig,
     pub output: OutputConfig,
+    #[serde(default)]
+    pub sync: SyncConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +40,31 @@ pub struct PlexConfig {
 pub struct OutputConfig {
     pub base_path: String,
     pub path_template: String,
+}
+
+fn default_interval_hours() -> u64 {
+    6
+}
+
+fn default_playlist_items() -> usize {
+    50
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncConfig {
+    #[serde(default = "default_interval_hours")]
+    pub interval_hours: u64,
+    #[serde(default = "default_playlist_items")]
+    pub playlist_items: usize,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            interval_hours: default_interval_hours(),
+            playlist_items: default_playlist_items(),
+        }
+    }
 }
 
 pub fn default_config_path() -> String {
@@ -102,5 +129,54 @@ path_template = "{channel}/{date} - {title}.{ext}"
             config.output.path_template,
             "{channel}/{date} - {title}.{ext}"
         );
+    }
+
+    #[test]
+    fn parses_config_with_sync_section() {
+        let toml = r#"
+[server]
+bind = "127.0.0.1:3000"
+[auth]
+admin_emails = ["admin@example.com"]
+[google_oauth]
+client_id = "cid"
+client_secret = "csec"
+[plex]
+url = "http://localhost:32400"
+token = "tok"
+library_section_id = "1"
+[output]
+base_path = "/mnt/plex"
+path_template = "{channel}/{date} - {title} [{id}].{ext}"
+[sync]
+interval_hours = 12
+playlist_items = 100
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.sync.interval_hours, 12);
+        assert_eq!(config.sync.playlist_items, 100);
+    }
+
+    #[test]
+    fn sync_config_defaults_when_section_missing() {
+        let toml = r#"
+[server]
+bind = "127.0.0.1:3000"
+[auth]
+admin_emails = []
+[google_oauth]
+client_id = "cid"
+client_secret = "csec"
+[plex]
+url = "http://localhost:32400"
+token = "tok"
+library_section_id = "1"
+[output]
+base_path = "/mnt/plex"
+path_template = "{channel}/{date} - {title}.{ext}"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.sync.interval_hours, 6);
+        assert_eq!(config.sync.playlist_items, 50);
     }
 }

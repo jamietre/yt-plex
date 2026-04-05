@@ -138,7 +138,7 @@ async fn tick(
         (cfg.output.base_path.clone(), cfg.output.path_template.clone())
     };
 
-    let rel_path = template::render(&path_template, &meta.channel, &date, &meta.title, &meta.ext);
+    let rel_path = template::render(&path_template, &meta.channel, &date, &meta.title, &meta.ext, &meta.id);
     let dest: PathBuf = PathBuf::from(&base_path).join(&rel_path);
     let src: PathBuf = tmp.path().join(format!("{}.{}", meta.id, meta.ext));
 
