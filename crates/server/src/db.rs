@@ -581,4 +581,30 @@ mod tests {
         let all_with_ignored = db.list_videos_for_channel(&ch.id, VideoFilter::All, true).unwrap();
         assert_eq!(all_with_ignored.len(), 2);
     }
+
+    #[test]
+    fn video_exists_returns_correct_bool() {
+        let db = test_db();
+        let ch = insert_test_channel(&db);
+        assert!(!db.video_exists("abc123").unwrap());
+        db.upsert_video("abc123", &ch.id, "Test", None, "2026-04-05T00:00:00Z").unwrap();
+        assert!(db.video_exists("abc123").unwrap());
+    }
+
+    #[test]
+    fn upsert_video_updates_title_and_last_seen_on_conflict() {
+        let db = test_db();
+        let ch = insert_test_channel(&db);
+        db.upsert_video("abc123", &ch.id, "Original Title", None, "2026-04-05T00:00:00Z").unwrap();
+        // Mark as downloaded so we can assert it's preserved
+        db.set_video_downloaded("abc123", "2026-04-05T06:00:00Z").unwrap();
+        // Upsert again with updated title and last_seen_at
+        db.upsert_video("abc123", &ch.id, "Updated Title", None, "2026-04-05T12:00:00Z").unwrap();
+        let videos = db.list_videos_for_channel(&ch.id, VideoFilter::Downloaded, false).unwrap();
+        assert_eq!(videos.len(), 1);
+        assert_eq!(videos[0].title, "Updated Title");
+        assert_eq!(videos[0].last_seen_at, "2026-04-05T12:00:00Z");
+        // downloaded_at must not be overwritten by the upsert
+        assert_eq!(videos[0].downloaded_at.as_deref(), Some("2026-04-05T06:00:00Z"));
+    }
 }
