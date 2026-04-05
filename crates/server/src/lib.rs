@@ -19,13 +19,19 @@ use yt_plex_common::config::Config;
 
 use crate::{db::Db, ws::WsHub};
 
+pub struct DeviceCodeEntry {
+    pub google_device_code: String,
+    pub expires_at: Instant,
+    pub interval: u64,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Db>,
     pub config: Arc<std::sync::RwLock<Config>>,
     pub config_path: String,
     pub ws_hub: WsHub,
-    pub oauth_states: Arc<Mutex<HashMap<String, Instant>>>,
+    pub oauth_states: Arc<Mutex<HashMap<String, DeviceCodeEntry>>>,
     pub http_client: reqwest::Client,
 }
 
@@ -58,8 +64,8 @@ pub async fn create_app_state(config: Config, config_path: String) -> Result<App
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
-        .route("/api/auth/login", get(routes::auth::oauth_login))
-        .route("/api/auth/callback", get(routes::auth::oauth_callback))
+        .route("/api/auth/login", get(routes::auth::device_login))
+        .route("/api/auth/poll", get(routes::auth::device_poll))
         .route("/api/logout", post(routes::auth::logout))
         .route("/api/jobs", post(routes::jobs::submit_job))
         .route("/api/jobs", get(routes::jobs::list_jobs))
