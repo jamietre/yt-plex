@@ -1,16 +1,13 @@
 use axum::{
-    body::Body,
     extract::{FromRequestParts, Query, State},
-    http::{header, request::Parts, Response, StatusCode},
-    response::{IntoResponse, Redirect},
+    http::{header, request::Parts, StatusCode},
+    response::{IntoResponse, Json},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tracing::warn;
 
-use crate::{auth as auth_util, AppState};
-
-const STATE_TTL: Duration = Duration::from_secs(600);
+use crate::{auth as auth_util, AppState, DeviceCodeEntry};
 
 /// Extracts the raw session token string from the Cookie header (or None).
 pub struct SessionToken(pub Option<String>);
@@ -37,37 +34,103 @@ where
     }
 }
 
-pub async fn oauth_login(State(state): State<AppState>) -> impl IntoResponse {
-    let oauth_state = auth_util::generate_token();
+// ── Device code initiation ────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct GoogleDeviceCodeResponse {
+    device_code: String,
+    user_code: String,
+    verification_url: String,
+    expires_in: u64,
+    interval: u64,
+}
+
+#[derive(Serialize)]
+pub struct DeviceLoginResponse {
+    pub poll_token: String,
+    pub user_code: String,
+    pub verification_url: String,
+    pub expires_in: u64,
+    pub interval: u64,
+}
+
+pub async fn device_login(State(state): State<AppState>) -> axum::response::Response {
+    let client_id = state.config.read().unwrap().google_oauth.client_id.clone();
+
+    let resp = match state
+        .http_client
+        .post("https://oauth2.googleapis.com/device/code")
+        .form(&[("client_id", client_id.as_str()), ("scope", "email")])
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("device code request failed: {e}");
+            return (StatusCode::BAD_GATEWAY, "Failed to contact Google.").into_response();
+        }
+    };
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        warn!("device code request returned HTTP {status}: {body}");
+        return (StatusCode::BAD_GATEWAY, "Failed to start sign-in.").into_response();
+    }
+
+    let google_resp: GoogleDeviceCodeResponse = match resp.json().await {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("device code parse failed: {e}");
+            return (StatusCode::BAD_GATEWAY, "Unexpected response from Google.").into_response();
+        }
+    };
+
+    let poll_token = auth_util::generate_token();
     {
         let mut states = state.oauth_states.lock().unwrap();
-        states.insert(oauth_state.clone(), Instant::now());
+        states.insert(
+            poll_token.clone(),
+            DeviceCodeEntry {
+                google_device_code: google_resp.device_code,
+                expires_at: Instant::now() + Duration::from_secs(google_resp.expires_in),
+                interval: google_resp.interval,
+            },
+        );
     }
-    let cfg = state.config.read().unwrap();
-    let url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth\
-         ?response_type=code\
-         &client_id={}\
-         &redirect_uri={}\
-         &scope=email\
-         &state={}",
-        urlencoding::encode(&cfg.google_oauth.client_id),
-        urlencoding::encode(&cfg.google_oauth.redirect_uri),
-        oauth_state, // hex string, no encoding needed
-    );
-    Redirect::to(&url)
+
+    Json(DeviceLoginResponse {
+        poll_token,
+        user_code: google_resp.user_code,
+        verification_url: google_resp.verification_url,
+        expires_in: google_resp.expires_in,
+        interval: google_resp.interval,
+    })
+    .into_response()
 }
 
-#[derive(Deserialize)]
-pub struct CallbackParams {
-    pub code: Option<String>,
-    pub state: Option<String>,
-    pub error: Option<String>,
-}
+// ── Device code polling ───────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct TokenResponse {
-    access_token: String,
+pub struct PollParams {
+    pub token: String,
+}
+
+#[derive(Serialize)]
+pub struct PollResponse {
+    pub status: &'static str, // "pending" | "done" | "denied" | "expired" | "error"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+// Google token endpoint response (device flow)
+#[derive(Deserialize)]
+struct GoogleTokenResponse {
+    access_token: Option<String>,
+    error: Option<String>,
+    interval: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -75,96 +138,148 @@ struct UserInfo {
     email: String,
 }
 
-pub async fn oauth_callback(
+pub async fn device_poll(
     State(state): State<AppState>,
-    Query(params): Query<CallbackParams>,
+    Query(params): Query<PollParams>,
 ) -> axum::response::Response {
-    // Prune expired states on every callback
+    // Prune expired entries
     {
         let mut states = state.oauth_states.lock().unwrap();
-        states.retain(|_, t| t.elapsed() < STATE_TTL);
+        states.retain(|_, e| e.expires_at > Instant::now());
     }
 
-    if let Some(err) = params.error {
-        warn!("OAuth error from Google: {err}");
-        return error_page("Google sign-in was cancelled or failed.");
-    }
-
-    let code = match params.code {
-        Some(c) => c,
-        None => return error_page("Missing code parameter."),
-    };
-    let incoming_state = match params.state {
-        Some(s) => s,
-        None => return error_page("Missing state parameter."),
-    };
-
-    // Validate and consume state (prevents CSRF)
-    let valid = {
-        let mut states = state.oauth_states.lock().unwrap();
-        states
-            .remove(&incoming_state)
-            .map(|t| t.elapsed() < STATE_TTL)
-            .unwrap_or(false)
-    };
-    if !valid {
-        return error_page("Invalid or expired state. Please try again.");
-    }
-
-    let (client_id, client_secret, redirect_uri) = {
-        let cfg = state.config.read().unwrap();
-        (
-            cfg.google_oauth.client_id.clone(),
-            cfg.google_oauth.client_secret.clone(),
-            cfg.google_oauth.redirect_uri.clone(),
-        )
+    let (google_device_code, client_id, client_secret) = {
+        let states = state.oauth_states.lock().unwrap();
+        match states.get(&params.token) {
+            None => {
+                return Json(PollResponse {
+                    status: "expired",
+                    interval: None,
+                    message: None,
+                })
+                .into_response();
+            }
+            Some(entry) => {
+                let cfg = state.config.read().unwrap();
+                (
+                    entry.google_device_code.clone(),
+                    cfg.google_oauth.client_id.clone(),
+                    cfg.google_oauth.client_secret.clone(),
+                )
+            }
+        }
     };
 
-    // Exchange code for access token
-    let token_resp = match state.http_client
+    // Poll Google's token endpoint
+    let token_resp = match state
+        .http_client
         .post("https://oauth2.googleapis.com/token")
         .form(&[
-            ("grant_type", "authorization_code"),
-            ("code", code.as_str()),
             ("client_id", client_id.as_str()),
             ("client_secret", client_secret.as_str()),
-            ("redirect_uri", redirect_uri.as_str()),
+            ("device_code", google_device_code.as_str()),
+            (
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:device_code",
+            ),
         ])
         .send()
         .await
     {
         Ok(r) => r,
         Err(e) => {
-            warn!("token exchange request failed: {e}");
-            return error_page("Failed to contact Google. Please try again.");
+            warn!("token poll request failed: {e}");
+            return Json(PollResponse {
+                status: "error",
+                interval: None,
+                message: Some("Failed to contact Google.".into()),
+            })
+            .into_response();
         }
     };
 
-    if !token_resp.status().is_success() {
-        let status = token_resp.status();
-        let body = token_resp.text().await.unwrap_or_default();
-        warn!("token exchange returned HTTP {status}: {body}");
-        return error_page("Failed to sign in with Google. Please try again.");
-    }
-    let token_data: TokenResponse = match token_resp.json().await {
+    let google_token: GoogleTokenResponse = match token_resp.json().await {
         Ok(d) => d,
         Err(e) => {
-            warn!("token exchange parse failed: {e}");
-            return error_page("Unexpected response from Google. Please try again.");
+            warn!("token poll parse failed: {e}");
+            return Json(PollResponse {
+                status: "error",
+                interval: None,
+                message: Some("Unexpected response from Google.".into()),
+            })
+            .into_response();
         }
     };
 
-    // Fetch user's email from userinfo endpoint
-    let userinfo_resp = match state.http_client
+    match google_token.error.as_deref() {
+        Some("authorization_pending") => {
+            return Json(PollResponse {
+                status: "pending",
+                interval: None,
+                message: None,
+            })
+            .into_response();
+        }
+        Some("slow_down") => {
+            return Json(PollResponse {
+                status: "pending",
+                interval: google_token.interval,
+                message: None,
+            })
+            .into_response();
+        }
+        Some("access_denied") => {
+            state.oauth_states.lock().unwrap().remove(&params.token);
+            return Json(PollResponse {
+                status: "denied",
+                interval: None,
+                message: Some("Access was denied.".into()),
+            })
+            .into_response();
+        }
+        Some(other) => {
+            warn!("Google token error: {other}");
+            state.oauth_states.lock().unwrap().remove(&params.token);
+            return Json(PollResponse {
+                status: "error",
+                interval: None,
+                message: Some(format!("Google error: {other}")),
+            })
+            .into_response();
+        }
+        None => {} // fall through to access_token handling
+    }
+
+    let access_token = match google_token.access_token {
+        Some(t) => t,
+        None => {
+            warn!("token poll returned neither access_token nor error");
+            return Json(PollResponse {
+                status: "error",
+                interval: None,
+                message: Some("Unexpected response from Google.".into()),
+            })
+            .into_response();
+        }
+    };
+
+    // Fetch user's email
+    let userinfo_resp = match state
+        .http_client
         .get("https://www.googleapis.com/oauth2/v2/userinfo")
-        .bearer_auth(&token_data.access_token)
+        .bearer_auth(&access_token)
         .send()
         .await
     {
         Ok(r) => r,
         Err(e) => {
             warn!("userinfo request failed: {e}");
-            return error_page("Failed to fetch user info from Google.");
+            return Json(PollResponse {
+                status: "error",
+                interval: None,
+                message: Some("Failed to fetch user info from Google.".into()),
+            })
+            .into_response();
         }
     };
 
@@ -172,17 +287,28 @@ pub async fn oauth_callback(
         let status = userinfo_resp.status();
         let body = userinfo_resp.text().await.unwrap_or_default();
         warn!("userinfo returned HTTP {status}: {body}");
-        return error_page("Failed to fetch user info from Google.");
+        return Json(PollResponse {
+            status: "error",
+            interval: None,
+            message: Some("Failed to fetch user info.".into()),
+        })
+        .into_response();
     }
+
     let userinfo: UserInfo = match userinfo_resp.json().await {
         Ok(d) => d,
         Err(e) => {
             warn!("userinfo parse failed: {e}");
-            return error_page("Unexpected user info response from Google.");
+            return Json(PollResponse {
+                status: "error",
+                interval: None,
+                message: Some("Unexpected user info response.".into()),
+            })
+            .into_response();
         }
     };
 
-    // Check email against configured admin list
+    // Check against admin list
     let is_admin = {
         let cfg = state.config.read().unwrap();
         cfg.auth
@@ -192,50 +318,56 @@ pub async fn oauth_callback(
     };
 
     if !is_admin {
-        warn!("OAuth login rejected for {}", userinfo.email);
-        return (
-            StatusCode::FORBIDDEN,
-            axum::response::Html(
-                "<h1>Access denied</h1>\
-                 <p>Your account is not authorised to access this application.</p>\
-                 <p><a href=\"/api/auth/login\">Try a different account</a></p>",
-            ),
-        )
-            .into_response();
+        warn!("device flow login rejected for {}", userinfo.email);
+        state.oauth_states.lock().unwrap().remove(&params.token);
+        return Json(PollResponse {
+            status: "denied",
+            interval: None,
+            message: Some("Your account is not authorised.".into()),
+        })
+        .into_response();
     }
 
-    // Create session and set cookie
-    let token = auth_util::generate_token();
-    if let Err(e) = state.db.insert_session(&token) {
+    // Create session
+    let session_token = auth_util::generate_token();
+    if let Err(e) = state.db.insert_session(&session_token) {
         warn!("insert session error: {e}");
-        return error_page("Server error creating session.");
+        return Json(PollResponse {
+            status: "error",
+            interval: None,
+            message: Some("Server error creating session.".into()),
+        })
+        .into_response();
     }
+
+    // Clean up state
+    state.oauth_states.lock().unwrap().remove(&params.token);
 
     let cookie = format!(
         "session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800",
-        token
+        session_token
     );
-    Response::builder()
-        .status(StatusCode::SEE_OTHER)
-        .header(header::LOCATION, "/")
-        .header(header::SET_COOKIE, cookie)
-        .body(Body::empty())
-        .unwrap()
+    (
+        StatusCode::OK,
+        [(header::SET_COOKIE, cookie)],
+        Json(PollResponse {
+            status: "done",
+            interval: None,
+            message: None,
+        }),
+    )
+        .into_response()
 }
 
-pub async fn logout(State(state): State<AppState>, SessionToken(token): SessionToken) -> impl IntoResponse {
+// ── Logout ────────────────────────────────────────────────────────────────────
+
+pub async fn logout(
+    State(state): State<AppState>,
+    SessionToken(token): SessionToken,
+) -> impl IntoResponse {
     if let Some(t) = token {
         let _ = state.db.delete_session(&t);
     }
     let clear = "session=; Path=/; HttpOnly; Max-Age=0";
     (StatusCode::OK, [(header::SET_COOKIE, clear)], "OK")
-}
-
-fn error_page(msg: &str) -> axum::response::Response {
-    let html = format!(
-        "<h1>Sign-in failed</h1>\
-         <p>{msg}</p>\
-         <p><a href=\"/api/auth/login\">Try again</a></p>"
-    );
-    (StatusCode::BAD_REQUEST, axum::response::Html(html)).into_response()
 }
