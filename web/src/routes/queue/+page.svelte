@@ -2,6 +2,10 @@
     import { onMount, onDestroy } from 'svelte';
     import { listJobs, submitJob, type Job } from '$lib/api';
     import { createWsStore } from '$lib/ws';
+    import Badge from '$lib/components/Badge.svelte';
+    import Button from '$lib/components/Button.svelte';
+    import PageHeader from '$lib/components/PageHeader.svelte';
+    import EmptyState from '$lib/components/EmptyState.svelte';
 
     let jobs = $state<Job[]>([]);
     let url = $state('');
@@ -52,54 +56,132 @@
         }
     }
 
-    const statusColour: Record<Job['status'], string> = {
-        queued: '#888',
-        downloading: '#4af',
-        copying: '#fa4',
-        done: '#4c4',
-        failed: '#f44',
+    // Map Job status → VideoStatus for Badge (only new/in_progress/downloaded map cleanly;
+    // queued/copying map to in_progress; failed gets a custom inline display)
+    function jobStatusBadge(status: Job['status']): 'new' | 'in_progress' | 'downloaded' | 'ignored' {
+        if (status === 'done')       return 'downloaded';
+        if (status === 'failed')     return 'ignored';
+        return 'in_progress';
+    }
+
+    const statusLabel: Record<Job['status'], string> = {
+        queued:      'Queued',
+        downloading: 'Downloading',
+        copying:     'Copying',
+        done:        'Done',
+        failed:      'Failed',
     };
 </script>
 
-<main>
-    <form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
-        <input type="url" bind:value={url} placeholder="https://www.youtube.com/watch?v=…" disabled={submitting} />
-        <button type="submit" disabled={submitting || !url}>Add URL (admin)</button>
-    </form>
-    {#if submitError}<p class="error">{submitError}</p>{/if}
+<div class="page">
+    <PageHeader title="Download Queue" />
 
-    <table>
-        <thead>
-            <tr><th>Status</th><th>Channel</th><th>Title</th><th>URL</th><th>Added</th></tr>
-        </thead>
-        <tbody>
-            {#each jobs as job (job.id)}
+    <form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="submit-form">
+        <input
+            type="url"
+            bind:value={url}
+            placeholder="https://www.youtube.com/watch?v=…"
+            disabled={submitting}
+            class="url-input"
+        />
+        <Button type="submit" variant="primary" disabled={submitting || !url}>
+            {submitting ? 'Queuing…' : 'Add URL'}
+        </Button>
+    </form>
+    {#if submitError}<p class="msg-error">{submitError}</p>{/if}
+
+    {#if jobs.length === 0}
+        <EmptyState message="No downloads yet." />
+    {:else}
+        <table class="data-table">
+            <thead>
                 <tr>
-                    <td style="color:{statusColour[job.status]}">
-                        {job.status}
-                        {#if job.status === 'downloading' && job.progress != null}
-                            <span class="progress">{job.progress.toFixed(0)}%</span>
-                        {/if}
-                    </td>
-                    <td>{job.channel_name ?? '—'}</td>
-                    <td>
-                        {job.title ?? '—'}
-                        {#if job.error}<span class="error" title={job.error}> ⚠</span>{/if}
-                    </td>
-                    <td><a href={job.url} target="_blank" rel="noreferrer">link</a></td>
-                    <td>{new Date(job.created_at).toLocaleString()}</td>
+                    <th>Status</th>
+                    <th>Channel</th>
+                    <th>Title</th>
+                    <th>Added</th>
                 </tr>
-            {/each}
-        </tbody>
-    </table>
-</main>
+            </thead>
+            <tbody>
+                {#each jobs as job (job.id)}
+                    <tr>
+                        <td class="td-status">
+                            <Badge status={jobStatusBadge(job.status)} />
+                            {#if job.status === 'downloading' && job.progress != null}
+                                <span class="progress">{job.progress.toFixed(0)}%</span>
+                            {/if}
+                            {#if job.status !== 'done' && job.status !== 'failed'}
+                                <span class="status-label">{statusLabel[job.status]}</span>
+                            {/if}
+                            {#if job.error}
+                                <span class="error-indicator" title={job.error}>⚠</span>
+                            {/if}
+                        </td>
+                        <td>{job.channel_name ?? '—'}</td>
+                        <td class="td-title">{job.title ?? '—'}</td>
+                        <td class="td-date">{new Date(job.created_at).toLocaleString()}</td>
+                    </tr>
+                {/each}
+            </tbody>
+        </table>
+    {/if}
+</div>
 
 <style>
-    main { padding: 1rem; font-family: sans-serif; }
-    form { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
-    input[type=url] { flex: 1; padding: 0.4rem; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #333; }
-    .error { color: red; }
-    .progress { font-size: 0.85em; opacity: 0.8; margin-left: 0.3em; }
+    .page { padding: 28px 24px; max-width: 900px; }
+
+    .submit-form {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 8px;
+        align-items: center;
+    }
+    .url-input {
+        flex: 1;
+        font-family: var(--font-ui);
+        font-size: 13px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        color: var(--text);
+        border-radius: var(--radius);
+        padding: 7px 11px;
+        outline: none;
+        transition: border-color 0.15s;
+    }
+    .url-input:focus { border-color: var(--amber); }
+    .url-input::placeholder { color: var(--text-3); }
+    .url-input:disabled { opacity: 0.5; }
+
+    .msg-error { color: var(--red); font-size: 12px; margin: 0 0 16px; }
+
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        margin-top: 20px;
+    }
+    .data-table th {
+        text-align: left;
+        padding: 6px 10px;
+        color: var(--text-3);
+        border-bottom: 1px solid var(--border);
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .data-table td {
+        padding: 9px 10px;
+        border-bottom: 1px solid var(--border);
+        color: var(--text-2);
+        vertical-align: middle;
+    }
+
+    .td-status { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .status-label { font-size: 11px; color: var(--text-3); }
+    .progress { font-size: 11px; color: var(--orange); font-weight: 600; }
+    .error-indicator { color: var(--red); font-size: 13px; cursor: help; }
+
+    .td-title { color: var(--text); max-width: 340px; }
+    .td-date  { white-space: nowrap; font-size: 11px; color: var(--text-3); }
 </style>
