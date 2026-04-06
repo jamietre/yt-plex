@@ -84,6 +84,7 @@ export type VideoStatus = 'new' | 'in_progress' | 'downloaded' | 'ignored';
 export interface Channel {
     id: string;
     youtube_channel_url: string;
+    youtube_channel_id: string | null;
     name: string;
     last_synced_at: string | null;
 }
