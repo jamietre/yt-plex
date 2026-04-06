@@ -15,6 +15,12 @@ pub struct WsHub {
     tx: broadcast::Sender<String>,
 }
 
+impl Default for WsHub {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WsHub {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(CHANNEL_CAPACITY);

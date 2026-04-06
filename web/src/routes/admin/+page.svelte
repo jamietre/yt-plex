@@ -160,12 +160,13 @@
         {#if channelError}<p class="error">{channelError}</p>{/if}
         {#if channels.length > 0}
             <table>
-                <thead><tr><th>Name</th><th>URL</th><th>Last synced</th><th></th></tr></thead>
+                <thead><tr><th>Name</th><th>Channel ID</th><th>URL</th><th>Last synced</th><th></th></tr></thead>
                 <tbody>
                     {#each channels as ch (ch.id)}
                         {@const syncing = syncingIds.has(ch.id)}
                         <tr class:syncing>
                             <td>{ch.name}</td>
+                            <td class="id-cell">{ch.youtube_channel_id ?? '—'}</td>
                             <td class="url-cell"><a href={ch.youtube_channel_url} target="_blank" rel="noreferrer">{ch.youtube_channel_url}</a></td>
                             <td>
                                 {#if syncing}
@@ -251,14 +252,18 @@
                 <label>Path template <input bind:value={settings.output.path_template} /></label>
                 <label>Thumbnail cache <input bind:value={settings.output.thumbnail_cache_dir} /></label>
                 <small>
-                    Variables: <code>{'{channel}'}</code> channel name, <code>{'{title}'}</code> video title,
+                    Variables: <code>{'{channel}'}</code> channel name,
+                    <code>{'{channel_id}'}</code> YouTube channel ID (UCxxxxxxxx),
+                    <code>{'{title}'}</code> video title,
                     <code>{'{id}'}</code> YouTube video ID, <code>{'{ext}'}</code> file extension,
                     <code>{'{date}'}</code> full date (YYYY-MM-DD), <code>{'{yyyy}'}</code> year, <code>{'{mm}'}</code> month, <code>{'{dd}'}</code> day.
                     <br />
                     <strong>Important:</strong> the YouTube ID must appear wrapped in square brackets somewhere in the filename
                     (e.g. <code>{'[{id}]'}</code>) so the server can match downloaded files back to their video record.
                     <br />
-                    Recommended for Plex TV Shows: <code>{'{channel}/Season {yyyy}/{title} [{id}].{ext}'}</code>
+                    For Plex TV Shows with the <a href="https://github.com/zeroqi/youtube-agent.bundle" target="_blank" rel="noreferrer">YouTube Agent</a>:
+                    <code>{'{channel} [{channel_id}]/Season {yyyy}/{title} [{id}].{ext}'}</code>
+                    — the <code>{'[UCxxxxxxxx]'}</code> in the folder name lets the agent fetch metadata automatically.
                 </small>
             </fieldset>
             {#if settingsError}<p class="error">{settingsError}</p>{/if}

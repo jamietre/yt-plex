@@ -15,24 +15,33 @@ pub struct FlatPlaylistEntry {
     pub youtube_id: String,
     pub title: String,
     pub published_at: Option<String>,
+    /// YouTube channel ID (UCxxxxxxxxxxxxxxxx). Same for every entry in a channel playlist.
+    pub channel_id: Option<String>,
 }
 
-/// Parse one line of yt-dlp --flat-playlist --print "%(id)s\t%(title)s\t%(upload_date)s" output.
+/// Parse one line of yt-dlp flat-playlist output.
+/// Format: `%(id)s\t%(title)s\t%(upload_date)s\t%(channel_id)s`
 pub fn parse_flat_playlist_line(line: &str) -> Option<FlatPlaylistEntry> {
     let line = line.trim();
     if line.is_empty() {
         return None;
     }
-    let mut parts = line.splitn(3, '\t');
+    let mut parts = line.splitn(4, '\t');
     let youtube_id = parts.next()?.trim().to_string();
     if youtube_id.is_empty() {
         return None;
     }
     let title = parts.next().unwrap_or("").trim().to_string();
     let date_raw = parts.next().unwrap_or("").trim();
-    // yt-dlp upload_date format is YYYYMMDD; convert to YYYY-MM-DD
     let published_at = parse_upload_date(date_raw);
-    Some(FlatPlaylistEntry { youtube_id, title, published_at })
+    let channel_id_raw = parts.next().unwrap_or("").trim().to_string();
+    // yt-dlp prints "NA" when a field is unavailable
+    let channel_id = if channel_id_raw.is_empty() || channel_id_raw == "NA" {
+        None
+    } else {
+        Some(channel_id_raw)
+    };
+    Some(FlatPlaylistEntry { youtube_id, title, published_at, channel_id })
 }
 
 fn parse_upload_date(s: &str) -> Option<String> {
@@ -111,7 +120,7 @@ pub async fn sync_channel(
     let mut args = vec![
         "--flat-playlist".to_string(),
         "--print".to_string(),
-        "%(id)s\t%(title)s\t%(upload_date)s".to_string(),
+        "%(id)s\t%(title)s\t%(upload_date)s\t%(channel_id)s".to_string(),
         "--no-warnings".to_string(),
     ];
     if !is_first_sync && config.sync.playlist_items > 0 {
@@ -132,9 +141,14 @@ pub async fn sync_channel(
     let now = Utc::now().to_rfc3339();
     let mut count = 0usize;
     let mut new_ids: Vec<String> = Vec::new();
+    let mut youtube_channel_id: Option<String> = None;
 
     while let Ok(Some(line)) = lines.next_line().await {
         if let Some(entry) = parse_flat_playlist_line(&line) {
+            // Capture the YouTube channel ID from the first entry that has it
+            if youtube_channel_id.is_none() {
+                youtube_channel_id = entry.channel_id.clone();
+            }
             let is_new = db.upsert_video(
                 &entry.youtube_id,
                 channel_id,
@@ -152,6 +166,11 @@ pub async fn sync_channel(
 
     child.wait().await.context("waiting for yt-dlp")?;
     db.set_channel_synced(channel_id, &now)?;
+    if let Some(yt_id) = &youtube_channel_id {
+        if let Err(e) = db.set_channel_youtube_id(channel_id, yt_id) {
+            warn!("set_channel_youtube_id for {channel_id}: {e:#}");
+        }
+    }
     info!("synced {count} videos for {channel_url} ({} new)", new_ids.len());
 
     // Fetch full metadata for newly discovered videos.
@@ -233,26 +252,44 @@ mod tests {
 
     #[test]
     fn parse_flat_playlist_line_happy_path() {
-        let entry = parse_flat_playlist_line("dQw4w9WgXcQ\tNever Gonna Give You Up\t19870727");
+        let entry = parse_flat_playlist_line("dQw4w9WgXcQ\tNever Gonna Give You Up\t19870727\tUCxxxxxx");
         assert_eq!(
             entry,
             Some(FlatPlaylistEntry {
                 youtube_id: "dQw4w9WgXcQ".into(),
                 title: "Never Gonna Give You Up".into(),
                 published_at: Some("1987-07-27".into()),
+                channel_id: Some("UCxxxxxx".into()),
             })
         );
     }
 
     #[test]
     fn parse_flat_playlist_line_missing_date() {
-        let entry = parse_flat_playlist_line("abc123\tSome Video\tNA");
+        let entry = parse_flat_playlist_line("abc123\tSome Video\tNA\tNA");
         assert_eq!(
             entry,
             Some(FlatPlaylistEntry {
                 youtube_id: "abc123".into(),
                 title: "Some Video".into(),
                 published_at: None,
+                channel_id: None,
+            })
+        );
+    }
+
+    #[test]
+    fn parse_flat_playlist_line_with_channel_id() {
+        let entry = parse_flat_playlist_line(
+            "lW4FetrdEK4\tSome Title\t20260328\tUCHnyfMqiRRz1Pbc3OkCkEug",
+        );
+        assert_eq!(
+            entry,
+            Some(FlatPlaylistEntry {
+                youtube_id: "lW4FetrdEK4".into(),
+                title: "Some Title".into(),
+                published_at: Some("2026-03-28".into()),
+                channel_id: Some("UCHnyfMqiRRz1Pbc3OkCkEug".into()),
             })
         );
     }

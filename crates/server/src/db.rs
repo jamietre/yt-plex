@@ -136,38 +136,40 @@ impl Db {
             "INSERT INTO channels (id, youtube_channel_url, name) VALUES (?1, ?2, ?3)",
             rusqlite::params![id, url, name],
         )?;
-        Ok(Channel { id, youtube_channel_url: url.to_owned(), name: name.to_owned(), last_synced_at: None })
+        Ok(Channel {
+            id,
+            youtube_channel_url: url.to_owned(),
+            name: name.to_owned(),
+            last_synced_at: None,
+            youtube_channel_id: None,
+        })
+    }
+
+    fn row_to_channel(row: &rusqlite::Row) -> rusqlite::Result<Channel> {
+        Ok(Channel {
+            id: row.get(0)?,
+            youtube_channel_url: row.get(1)?,
+            name: row.get(2)?,
+            last_synced_at: row.get(3)?,
+            youtube_channel_id: row.get(4)?,
+        })
     }
 
     pub fn list_channels(&self) -> Result<Vec<Channel>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, youtube_channel_url, name, last_synced_at FROM channels ORDER BY name ASC",
+            "SELECT id, youtube_channel_url, name, last_synced_at, youtube_channel_id FROM channels ORDER BY name ASC",
         )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(Channel {
-                id: row.get(0)?,
-                youtube_channel_url: row.get(1)?,
-                name: row.get(2)?,
-                last_synced_at: row.get(3)?,
-            })
-        })?;
+        let rows = stmt.query_map([], Self::row_to_channel)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn get_channel(&self, id: &str) -> Result<Option<Channel>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, youtube_channel_url, name, last_synced_at FROM channels WHERE id = ?1",
+            "SELECT id, youtube_channel_url, name, last_synced_at, youtube_channel_id FROM channels WHERE id = ?1",
         )?;
-        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
-            Ok(Channel {
-                id: row.get(0)?,
-                youtube_channel_url: row.get(1)?,
-                name: row.get(2)?,
-                last_synced_at: row.get(3)?,
-            })
-        })?;
+        let mut rows = stmt.query_map(rusqlite::params![id], Self::row_to_channel)?;
         rows.next().transpose().map_err(Into::into)
     }
 
@@ -182,6 +184,15 @@ impl Db {
         conn.execute(
             "UPDATE channels SET last_synced_at = ?1 WHERE id = ?2",
             rusqlite::params![synced_at, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_channel_youtube_id(&self, id: &str, youtube_channel_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE channels SET youtube_channel_id = ?1 WHERE id = ?2",
+            rusqlite::params![youtube_channel_id, id],
         )?;
         Ok(())
     }
@@ -321,6 +332,7 @@ impl Db {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn list_videos_for_channel(
         &self,
         channel_id: &str,
@@ -508,22 +520,15 @@ impl Db {
     pub fn list_channels_for_profile(&self, profile_id: Option<i64>) -> Result<Vec<Channel>> {
         let conn = self.conn.lock().unwrap();
         let sql = match profile_id {
-            None => "SELECT id, youtube_channel_url, name, last_synced_at FROM channels ORDER BY name ASC".to_string(),
+            None => "SELECT id, youtube_channel_url, name, last_synced_at, youtube_channel_id FROM channels ORDER BY name ASC".to_string(),
             Some(pid) => format!(
-                "SELECT id, youtube_channel_url, name, last_synced_at FROM channels
+                "SELECT id, youtube_channel_url, name, last_synced_at, youtube_channel_id FROM channels
                  WHERE id IN (SELECT channel_id FROM profile_channels WHERE profile_id={pid})
                  ORDER BY name ASC"
             ),
         };
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map([], |row| {
-            Ok(Channel {
-                id: row.get(0)?,
-                youtube_channel_url: row.get(1)?,
-                name: row.get(2)?,
-                last_synced_at: row.get(3)?,
-            })
-        })?;
+        let rows = stmt.query_map([], Self::row_to_channel)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
@@ -672,7 +677,9 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (profile_id, youtube_id)
     );
     ",
-    // ── v2: add your next migration here ─────────────────────────────────────
+    // ── v2: add youtube_channel_id to channels ────────────────────────────────
+    "ALTER TABLE channels ADD COLUMN youtube_channel_id TEXT;",
+    // ── v3: add your next migration here ─────────────────────────────────────
     // "ALTER TABLE ... ADD COLUMN ...;",
 ];
 

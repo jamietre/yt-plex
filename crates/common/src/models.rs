@@ -84,6 +84,9 @@ pub struct Channel {
     pub youtube_channel_url: String,
     pub name: String,
     pub last_synced_at: Option<String>,
+    /// YouTube channel ID in UCxxxxxxxxxxxxxxxx format.
+    /// Populated on first sync; used in the {channel_id} path template variable.
+    pub youtube_channel_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,7 +137,7 @@ pub enum VideoFilter {
 }
 
 impl VideoFilter {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "downloaded" => Self::Downloaded,
             "all" => Self::All,

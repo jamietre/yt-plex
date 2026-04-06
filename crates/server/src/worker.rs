@@ -15,6 +15,7 @@ pub struct YtDlpMeta {
     pub title: String,
     pub ext: String,
     pub id: String,
+    pub channel_id: Option<String>,
 }
 
 pub fn parse_ytdlp_json(json: &str) -> Result<YtDlpMeta> {
@@ -118,8 +119,7 @@ async fn tick(
     // yt-dlp may print multiple JSON lines (playlist); take the last non-empty one
     let last_line = stdout
         .lines()
-        .filter(|l| !l.trim().is_empty())
-        .last()
+        .rfind(|l| !l.trim().is_empty())
         .unwrap_or("");
 
     let meta = match parse_ytdlp_json(last_line) {
@@ -139,7 +139,8 @@ async fn tick(
         (cfg.output.base_path.clone(), cfg.output.path_template.clone())
     };
 
-    let rel_path = template::render(&path_template, &meta.channel, &date, &meta.title, &meta.ext, &meta.id);
+    let channel_id = meta.channel_id.as_deref().unwrap_or("");
+    let rel_path = template::render(&path_template, &meta.channel, channel_id, &date, &meta.title, &meta.ext, &meta.id);
     let dest: PathBuf = PathBuf::from(&base_path).join(&rel_path);
     let src: PathBuf = tmp.path().join(format!("{}.{}", meta.id, meta.ext));
 

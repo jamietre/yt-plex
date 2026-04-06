@@ -124,7 +124,7 @@ pub async fn list_channel_videos(
     Path(id): Path<String>,
     axum::extract::Query(params): axum::extract::Query<VideoQueryParams>,
 ) -> impl IntoResponse {
-    let filter = yt_plex_common::models::VideoFilter::from_str(
+    let filter = yt_plex_common::models::VideoFilter::parse(
         params.filter.as_deref().unwrap_or("new"),
     );
     let show_ignored = params.show_ignored.unwrap_or(false);

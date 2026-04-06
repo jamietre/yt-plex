@@ -35,3 +35,13 @@
 - Search restricted to `title` column only (not description) to reduce false positives
 - `set_video_downloaded` now stores the file path alongside the downloaded timestamp
 - `insert_job` now accepts optional `channel_name` and `title` for display in the queue before metadata is fetched
+- `VideoFilter::from_str` renamed to `VideoFilter::parse` to avoid shadowing `std::str::FromStr`
+- `sanitise` in `template.rs` collapses consecutive `replace` calls into a single char-set replace
+- `WsHub` now derives `Default` via an explicit impl; `new()` delegates to it
+
+### Added
+- `{channel_id}` path template variable — expands to the YouTube channel ID (e.g. `UCxxxxxxxxxxxxxxxx`)
+- DB migration v2: `ALTER TABLE channels ADD COLUMN youtube_channel_id TEXT`
+- Sync captures `%(channel_id)s` from yt-dlp flat-playlist and stores it on the channel record after first sync
+- Admin channels table shows a "Channel ID" column (populated after sync)
+- Admin settings help updated with `{channel_id}` variable, YouTube Agent plugin link, and recommended Plex TV Shows template
