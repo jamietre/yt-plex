@@ -414,7 +414,18 @@ impl Db {
             VideoFilter::All => ignore_cond.to_string(),
         };
 
-        // ?2 IS NULL short-circuits before MATCH is evaluated, so NULL search is safe.
+        // Sanitise the search term for FTS5: wrap each whitespace-separated word
+        // in double quotes so punctuation (dots, parentheses, etc.) is treated
+        // literally rather than as FTS5 syntax.
+        let sanitised_search: Option<String> = search.map(|s| {
+            s.split_whitespace()
+                .map(|word| format!("\"{}\"", word.replace('"', "")))
+                .collect::<Vec<_>>()
+                .join(" ")
+        });
+        let search_param = sanitised_search.as_deref();
+
+        // search_param IS NULL short-circuits before MATCH is evaluated, so NULL search is safe.
         // ?5 is profile_id (may be NULL for admin).
         let sql = format!(
             "SELECT v.youtube_id, v.channel_id, v.title, v.published_at,
@@ -441,7 +452,7 @@ impl Db {
         // Fetch limit+1 to detect whether there are more pages.
         let fetch_limit = (limit + 1) as i64;
         let rows = stmt.query_map(
-            rusqlite::params![channel_id, search, fetch_limit, offset as i64, profile_id],
+            rusqlite::params![channel_id, search_param, fetch_limit, offset as i64, profile_id],
             |row| {
                 let status_str: String = row.get(7)?;
                 let status = match status_str.as_str() {
