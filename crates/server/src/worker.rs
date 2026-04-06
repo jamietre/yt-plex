@@ -16,6 +16,8 @@ pub struct YtDlpMeta {
     pub ext: String,
     pub id: String,
     pub channel_id: Option<String>,
+    /// Upload date in YYYYMMDD format as returned by yt-dlp.
+    pub upload_date: Option<String>,
 }
 
 pub fn parse_ytdlp_json(json: &str) -> Result<YtDlpMeta> {
@@ -133,7 +135,11 @@ async fn tick(
         }
     };
 
-    let date = Utc::now().format("%Y-%m-%d").to_string();
+    // Use the video's actual upload date for the path template; fall back to today
+    // only if yt-dlp didn't provide one.
+    let date = meta.upload_date.as_deref()
+        .and_then(crate::sync::parse_upload_date)
+        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
     let (base_path, path_template) = {
         let cfg = config.read().unwrap();
         (cfg.output.base_path.clone(), cfg.output.path_template.clone())

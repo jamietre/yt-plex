@@ -44,7 +44,7 @@ pub fn parse_flat_playlist_line(line: &str) -> Option<FlatPlaylistEntry> {
     Some(FlatPlaylistEntry { youtube_id, title, published_at, channel_id })
 }
 
-fn parse_upload_date(s: &str) -> Option<String> {
+pub fn parse_upload_date(s: &str) -> Option<String> {
     if s.len() == 8 && s.chars().all(|c| c.is_ascii_digit()) {
         Some(format!("{}-{}-{}", &s[0..4], &s[4..6], &s[6..8]))
     } else {
