@@ -31,111 +31,124 @@
     }
 </script>
 
-<main>
-    <h1>Who's watching?</h1>
+<div class="page">
+    <div class="card">
+        <h1 class="heading">Who's watching?</h1>
 
-    {#if loading}
-        <p class="hint">Loading profiles…</p>
-    {:else if error}
-        <p class="error">{error}</p>
-    {:else if profiles.length === 0 && !adminProfile}
-        <p class="hint">No profiles yet. Ask an admin to create one, or log in as admin below.</p>
-    {:else}
-        <div class="grid">
-            {#each profiles as profile}
-                <button
-                    class="card"
-                    disabled={selecting !== null}
-                    onclick={() => selectProfile(profile)}
-                >
-                    <div class="avatar">{profile.name[0].toUpperCase()}</div>
-                    <span class="name">{profile.name}</span>
-                    {#if selecting === profile.id}
-                        <span class="loading-dot">…</span>
-                    {/if}
-                </button>
-            {/each}
-            {#if adminProfile}
-                <button
-                    class="card admin-card"
-                    disabled={selecting !== null}
-                    onclick={() => selectProfile(adminProfile!)}
-                >
-                    <div class="avatar admin-avatar">⚙</div>
-                    <span class="name">Admin</span>
-                    {#if selecting === adminProfile.id}
-                        <span class="loading-dot">…</span>
-                    {/if}
-                </button>
-            {/if}
-        </div>
-    {/if}
+        {#if loading}
+            <p class="hint">Loading profiles…</p>
+        {:else if error}
+            <p class="msg-error">{error}</p>
+        {:else if profiles.length === 0 && !adminProfile}
+            <p class="hint">No profiles yet. Ask an admin to create one, or log in as admin below.</p>
+        {:else}
+            <div class="grid">
+                {#each profiles as profile}
+                    <button
+                        class="profile-btn"
+                        disabled={selecting !== null}
+                        onclick={() => selectProfile(profile)}
+                    >
+                        <div class="avatar">{profile.name[0].toUpperCase()}</div>
+                        <span class="profile-name">{profile.name}</span>
+                        {#if selecting === profile.id}
+                            <span class="selecting">…</span>
+                        {/if}
+                    </button>
+                {/each}
+                {#if adminProfile}
+                    <button
+                        class="profile-btn admin-btn"
+                        disabled={selecting !== null}
+                        onclick={() => selectProfile(adminProfile!)}
+                    >
+                        <div class="avatar admin-avatar">⚙</div>
+                        <span class="profile-name">Admin</span>
+                        {#if selecting === adminProfile.id}
+                            <span class="selecting">…</span>
+                        {/if}
+                    </button>
+                {/if}
+            </div>
+        {/if}
 
-    {#if !adminProfile}
-        <div class="login-row">
-            <a href="/login" class="login-link">Admin login ↗</a>
-        </div>
-    {/if}
-</main>
+        {#if !adminProfile}
+            <div class="login-row">
+                <a href="/login" class="login-link">Admin login ↗</a>
+            </div>
+        {/if}
+    </div>
+</div>
 
 <style>
-    main {
-        max-width: 600px;
-        margin: 4rem auto;
-        padding: 1rem;
-        font-family: sans-serif;
+    .page {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem;
+    }
+    .card {
+        width: 100%;
+        max-width: 560px;
         text-align: center;
     }
-    h1 {
-        color: #ddd;
-        font-size: 1.6rem;
-        margin-bottom: 2rem;
+    .heading {
+        font-family: var(--font-display);
+        font-size: 28px;
+        font-weight: 700;
+        color: var(--text);
+        margin: 0 0 2rem;
     }
+    .hint     { color: var(--text-2); font-size: 13px; font-style: italic; }
+    .msg-error{ color: var(--red);    font-size: 13px; }
+
     .grid {
         display: flex;
         flex-wrap: wrap;
-        gap: 1rem;
+        gap: 12px;
         justify-content: center;
         margin-bottom: 2rem;
     }
-    .card {
+
+    .profile-btn {
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 0.5rem;
-        background: #1a1a2e;
-        border: 1px solid #333;
-        border-radius: 8px;
-        padding: 1.5rem 2rem;
+        gap: 8px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 20px 24px;
         cursor: pointer;
         min-width: 120px;
         transition: border-color 0.15s, background 0.15s;
+        font-family: var(--font-ui);
     }
-    .card:hover:not(:disabled) {
-        background: #22223a;
-        border-color: #4af;
-    }
-    .card:disabled { opacity: 0.6; cursor: default; }
+    .profile-btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--amber); }
+    .profile-btn:disabled { opacity: 0.6; cursor: default; }
+
     .avatar {
         width: 52px;
         height: 52px;
         border-radius: 50%;
-        background: #4af;
+        background: var(--amber);
         color: #000;
-        font-size: 1.4rem;
+        font-size: 1.3rem;
         font-weight: 700;
         display: flex;
         align-items: center;
         justify-content: center;
+        font-family: var(--font-display);
     }
-    .name { color: #ccc; font-size: 0.95rem; }
-    .loading-dot { color: #888; font-size: 0.8rem; }
-    .admin-card { border-color: #555; }
-    .admin-card:hover:not(:disabled) { border-color: #fa4; }
-    .admin-avatar { background: #555; color: #ddd; font-size: 1.2rem; }
+    .admin-btn { border-color: var(--border-2); }
+    .admin-btn:hover:not(:disabled) { border-color: var(--orange); }
+    .admin-avatar { background: var(--surface-3); color: var(--text-2); font-size: 1.1rem; border: 1px solid var(--border-2); }
+
+    .profile-name { color: var(--text); font-size: 13px; font-weight: 500; }
+    .selecting    { color: var(--text-3); font-size: 12px; }
+
     .login-row { margin-top: 1.5rem; }
-    .login-link { color: #666; font-size: 0.85rem; text-decoration: none; }
-    .login-link:hover { color: #4af; text-decoration: underline; }
-    .hint { color: #888; font-style: italic; }
-    .error { color: #f44; }
+    .login-link { color: var(--text-3); font-size: 12px; text-decoration: none; transition: color 0.15s; }
+    .login-link:hover { color: var(--amber); }
 </style>
