@@ -59,11 +59,20 @@ pub fn extract_youtube_id_from_path(path: &Path) -> Option<String> {
 #[derive(Deserialize)]
 struct YtDlpVideoMeta {
     description: Option<String>,
+    /// Upload date in YYYYMMDD format, as returned by yt-dlp.
+    upload_date: Option<String>,
 }
 
-/// Fetch the description for a single video by calling yt-dlp -j.
-/// Runs synchronously (blocking tokio task). Takes ~2–5 seconds.
-pub async fn fetch_video_description(youtube_id: &str) -> Result<String> {
+pub struct VideoMeta {
+    pub description: String,
+    /// Upload date formatted as YYYY-MM-DD, or None if unavailable.
+    pub published_at: Option<String>,
+}
+
+/// Fetch full metadata for a single video via yt-dlp -j.
+/// Returns description and the real upload date (reliable, unlike flat-playlist).
+/// Takes ~2–5 seconds per video.
+pub async fn fetch_video_meta(youtube_id: &str) -> Result<VideoMeta> {
     let url = format!("https://www.youtube.com/watch?v={youtube_id}");
     let output = Command::new("yt-dlp")
         .args(["--no-playlist", "-j", &url])
@@ -71,14 +80,22 @@ pub async fn fetch_video_description(youtube_id: &str) -> Result<String> {
         .stderr(std::process::Stdio::null())
         .output()
         .await
-        .context("spawning yt-dlp for description fetch")?;
+        .context("spawning yt-dlp for video meta fetch")?;
 
     if !output.status.success() {
         anyhow::bail!("yt-dlp exited with status {}", output.status);
     }
     let meta: YtDlpVideoMeta = serde_json::from_slice(&output.stdout)
         .context("parsing yt-dlp JSON")?;
-    Ok(meta.description.unwrap_or_default())
+    Ok(VideoMeta {
+        description: meta.description.unwrap_or_default(),
+        published_at: meta.upload_date.as_deref().and_then(parse_upload_date),
+    })
+}
+
+/// Kept for backwards-compat call sites that only need the description.
+pub async fn fetch_video_description(youtube_id: &str) -> Result<String> {
+    Ok(fetch_video_meta(youtube_id).await?.description)
 }
 
 /// Sync one channel: run yt-dlp flat-playlist and upsert videos into DB.
@@ -137,15 +154,21 @@ pub async fn sync_channel(
     db.set_channel_synced(channel_id, &now)?;
     info!("synced {count} videos for {channel_url} ({} new)", new_ids.len());
 
-    // Fetch descriptions for newly discovered videos so they're available for future search.
+    // Fetch full metadata for newly discovered videos.
+    // yt-dlp -j gives the real upload_date (flat-playlist is unreliable for dates).
     for youtube_id in &new_ids {
-        match fetch_video_description(youtube_id).await {
-            Ok(desc) => {
-                if let Err(e) = db.set_video_description(youtube_id, &desc) {
+        match fetch_video_meta(youtube_id).await {
+            Ok(meta) => {
+                if let Err(e) = db.set_video_description(youtube_id, &meta.description) {
                     warn!("set_video_description for {youtube_id}: {e:#}");
                 }
+                if let Some(date) = &meta.published_at {
+                    if let Err(e) = db.set_video_published_at(youtube_id, date) {
+                        warn!("set_video_published_at for {youtube_id}: {e:#}");
+                    }
+                }
             }
-            Err(e) => warn!("description fetch for {youtube_id}: {e:#}"),
+            Err(e) => warn!("meta fetch for {youtube_id}: {e:#}"),
         }
     }
     if !new_ids.is_empty() {

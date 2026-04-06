@@ -310,6 +310,17 @@ impl Db {
         Ok(())
     }
 
+    /// Overwrite published_at with the authoritative date from yt-dlp -j.
+    /// Always overwrites (not COALESCE) because flat-playlist dates are unreliable.
+    pub fn set_video_published_at(&self, youtube_id: &str, published_at: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE videos SET published_at = ?1 WHERE youtube_id = ?2",
+            rusqlite::params![published_at, youtube_id],
+        )?;
+        Ok(())
+    }
+
     pub fn list_videos_for_channel(
         &self,
         channel_id: &str,

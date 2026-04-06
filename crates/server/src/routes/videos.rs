@@ -15,26 +15,32 @@ pub async fn get_video(
             return (StatusCode::INTERNAL_SERVER_ERROR, "Server error").into_response();
         }
     };
-    // If description not yet cached, fetch it now (synchronous, ~3s)
+    // If description not yet cached, fetch full meta now (synchronous, ~3s).
+    // This also gives us the authoritative upload date.
     if video.description.is_none() {
-        match sync::fetch_video_description(&youtube_id).await {
-            Ok(desc) => {
-                if let Err(e) = state.db.set_video_description(&youtube_id, &desc) {
+        match sync::fetch_video_meta(&youtube_id).await {
+            Ok(meta) => {
+                if let Err(e) = state.db.set_video_description(&youtube_id, &meta.description) {
                     error!("set_video_description: {e}");
                 }
-                // Re-fetch to get updated description
+                if let Some(date) = &meta.published_at {
+                    if let Err(e) = state.db.set_video_published_at(&youtube_id, date) {
+                        error!("set_video_published_at: {e}");
+                    }
+                }
+                // Re-fetch to return updated record
                 return match state.db.get_video(&youtube_id) {
                     Ok(Some(v)) => Json(v).into_response(),
                     Ok(None) => (StatusCode::NOT_FOUND, "Video not found").into_response(),
                     Err(e) => {
-                        error!("get_video after desc update: {e}");
+                        error!("get_video after meta update: {e}");
                         (StatusCode::INTERNAL_SERVER_ERROR, "Server error").into_response()
                     }
                 };
             }
             Err(e) => {
-                // Non-fatal: return the video without description
-                error!("fetch_video_description for {youtube_id}: {e:#}");
+                // Non-fatal: return the video without description/date
+                error!("fetch_video_meta for {youtube_id}: {e:#}");
             }
         }
     }
