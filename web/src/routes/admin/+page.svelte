@@ -2,7 +2,7 @@
     import { onMount, onDestroy } from 'svelte';
     import {
         getSettings, updateSettings, type Settings,
-        listChannels, addChannel, deleteChannel, syncChannel,
+        listChannels, addChannel, deleteChannel, syncChannel, rescanFilesystem,
         submitJob, listProfiles, createProfile, deleteProfile,
         type Channel, type Profile,
     } from '$lib/api';
@@ -28,6 +28,8 @@
     // IDs of channels currently being synced (background poll clears them)
     let syncingIds = $state(new Set<string>());
     let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let rescanning = $state(false);
+    let rescanMsg = $state('');
 
     // URL submission
     let submitUrl = $state('');
@@ -68,6 +70,16 @@
             await deleteChannel(id);
             channels = channels.filter(c => c.id !== id);
         } catch { /* ignore */ }
+    }
+
+    async function handleRescan() {
+        rescanning = true; rescanMsg = '';
+        try {
+            await rescanFilesystem();
+            rescanMsg = 'Re-scan started — downloaded status will update shortly.';
+        } catch (e: unknown) {
+            rescanMsg = e instanceof Error ? e.message : 'Re-scan failed';
+        } finally { rescanning = false; }
     }
 
     async function handleSyncChannel(id: string) {
@@ -188,6 +200,13 @@
         {:else}
             <p class="empty">No channels yet.</p>
         {/if}
+        <div class="rescan-row">
+            <button onclick={handleRescan} disabled={rescanning}>
+                {rescanning ? 'Scanning…' : '↺ Re-scan filesystem'}
+            </button>
+            <span class="rescan-hint">Marks present files as downloaded; clears stale downloaded status for deleted files.</span>
+        </div>
+        {#if rescanMsg}<p class="ok">{rescanMsg}</p>{/if}
     </section>
 
     <!-- URL submission -->
@@ -297,6 +316,8 @@
     small code { background: #2a2a3a; padding: 1px 4px; border-radius: 3px; font-size: 0.85em; color: #aaa; }
     tr.syncing td { opacity: 0.6; }
     .sync-status { color: #fa4; font-size: 0.8rem; }
+    .rescan-row { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.75rem; flex-wrap: wrap; }
+    .rescan-hint { color: #666; font-size: 0.8rem; }
     .empty { color: #666; font-style: italic; font-size: 0.85rem; }
     .error { color: #f44; font-size: 0.85rem; }
     .ok { color: #4c4; font-size: 0.85rem; }

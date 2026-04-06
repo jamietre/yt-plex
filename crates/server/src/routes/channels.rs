@@ -142,6 +142,25 @@ pub async fn list_channel_videos(
     }
 }
 
+/// Trigger a filesystem re-scan: marks present videos as downloaded, clears
+/// stale downloaded status for files no longer on disk.
+pub async fn rescan_filesystem(
+    State(state): State<AppState>,
+    SessionToken(token): SessionToken,
+) -> impl IntoResponse {
+    if !is_admin(&state, token.as_deref()) {
+        return (StatusCode::UNAUTHORIZED, "Admin required").into_response();
+    }
+    let base_path = state.config.read().unwrap().output.base_path.clone();
+    let db = Arc::clone(&state.db);
+    tokio::spawn(async move {
+        if let Err(e) = tokio::task::spawn_blocking(move || sync::scan_filesystem(&base_path, &db)).await {
+            error!("rescan_filesystem task: {e:#}");
+        }
+    });
+    StatusCode::ACCEPTED.into_response()
+}
+
 #[derive(Deserialize)]
 pub struct VideoQueryParams {
     pub filter: Option<String>,

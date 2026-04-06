@@ -141,6 +141,11 @@ export async function syncChannel(id: string): Promise<void> {
     if (!res.ok) throw new Error(`syncChannel failed: ${res.status}`);
 }
 
+export async function rescanFilesystem(): Promise<void> {
+    const res = await fetch('/api/rescan', { method: 'POST' });
+    if (!res.ok) throw new Error(`rescan failed: ${res.status}`);
+}
+
 export async function listVideos(
     channelId: string,
     filter: 'new' | 'downloaded' | 'all' = 'new',

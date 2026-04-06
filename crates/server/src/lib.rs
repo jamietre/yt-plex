@@ -98,6 +98,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/channels/{id}", delete(routes::channels::delete_channel))
         .route("/api/channels/{id}/sync", post(routes::channels::sync_channel))
         .route("/api/channels/{id}/videos", get(routes::channels::list_channel_videos))
+        .route("/api/rescan", post(routes::channels::rescan_filesystem))
         .route("/api/videos/{youtube_id}", get(routes::videos::get_video))
         .route("/api/videos/{youtube_id}/ignore", post(routes::videos::ignore_video))
         .route("/api/videos/{youtube_id}/ignore", delete(routes::videos::unignore_video))

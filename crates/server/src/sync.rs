@@ -197,11 +197,15 @@ pub async fn sync_channel(
     Ok(())
 }
 
-/// Walk base_path and set downloaded_at on any video whose youtube_id appears
-/// in a filename as `[youtube_id]`.
+/// Walk base_path, mark present videos as downloaded, and clear the downloaded
+/// status of any video whose file no longer exists on disk.
 pub fn scan_filesystem(base_path: &str, db: &Db) -> Result<()> {
+    use std::collections::HashSet;
+
     let now = Utc::now().to_rfc3339();
-    let mut found = 0usize;
+    let mut found_ids: HashSet<String> = HashSet::new();
+    let mut marked = 0usize;
+
     for entry in walkdir::WalkDir::new(base_path)
         .follow_links(false)
         .into_iter()
@@ -212,11 +216,23 @@ pub fn scan_filesystem(base_path: &str, db: &Db) -> Result<()> {
             if db.video_exists(&youtube_id)? {
                 let path_str = entry.path().to_string_lossy();
                 db.set_video_downloaded(&youtube_id, &now, &path_str)?;
-                found += 1;
+                found_ids.insert(youtube_id);
+                marked += 1;
             }
         }
     }
-    info!("filesystem scan: {found} videos marked as downloaded");
+
+    // Clear downloaded status for any tracked video no longer present on disk
+    let previously_downloaded = db.list_downloaded_youtube_ids()?;
+    let mut cleared = 0usize;
+    for youtube_id in previously_downloaded {
+        if !found_ids.contains(&youtube_id) {
+            db.clear_video_downloaded(&youtube_id)?;
+            cleared += 1;
+        }
+    }
+
+    info!("filesystem scan: {marked} present, {cleared} stale entries cleared");
     Ok(())
 }
 

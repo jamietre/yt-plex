@@ -268,6 +268,25 @@ impl Db {
         Ok(())
     }
 
+    pub fn clear_video_downloaded(&self, youtube_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE videos SET downloaded_at = NULL, file_path = NULL WHERE youtube_id = ?1",
+            rusqlite::params![youtube_id],
+        )?;
+        Ok(())
+    }
+
+    /// Return youtube_ids of all videos currently marked as downloaded.
+    pub fn list_downloaded_youtube_ids(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT youtube_id FROM videos WHERE downloaded_at IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     pub fn ignore_video(&self, youtube_id: &str, ignored_at: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
