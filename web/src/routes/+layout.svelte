@@ -1,4 +1,5 @@
 <script lang="ts">
+    import '$lib/styles/theme.css';
     import { goto } from '$app/navigation';
     import { page } from '$app/stores';
     import { logout, getProfileSession, clearProfileSession, type Profile } from '$lib/api';
@@ -10,7 +11,6 @@
     let profile = $state<Profile | null>(null);
     let profileLoaded = $state(false);
 
-    // Routes that don't need a profile
     const PUBLIC_ROUTES = ['/login', '/select-profile'];
 
     onMount(async () => {
@@ -27,7 +27,6 @@
         }
         profileLoaded = true;
 
-        // Guard: redirect to profile picker if no profile selected
         const path = $page.url.pathname;
         if (!profile && !PUBLIC_ROUTES.some(r => path.startsWith(r))) {
             goto('/select-profile');
@@ -53,19 +52,23 @@
 
 {#if $page.url.pathname !== '/login' && $page.url.pathname !== '/select-profile'}
 <nav>
-    <a href="/browse" class:active={isActive('/browse')}>Browse</a>
-    <a href="/queue" class:active={isActive('/queue')}>Queue</a>
-    {#if isAdmin}
-        <a href="/admin" class:active={isActive('/admin')}>Admin</a>
-    {/if}
-    <div class="spacer"></div>
-    {#if profile}
-        <span class="profile-name">{profile.name}</span>
-        <button class="switch-btn" onclick={handleSwitchProfile}>Switch</button>
-    {/if}
-    {#if isAdmin}
-        <button class="logout" onclick={handleLogout}>Log out</button>
-    {/if}
+    <a href="/browse" class="logo">yt-plex</a>
+    <div class="nav-links">
+        <a href="/browse" class:active={isActive('/browse')}>Browse</a>
+        <a href="/queue"  class:active={isActive('/queue')}>Queue</a>
+        {#if isAdmin}
+            <a href="/admin" class:active={isActive('/admin')}>Admin</a>
+        {/if}
+    </div>
+    <div class="nav-right">
+        {#if profile}
+            <span class="profile-name">{profile.name}</span>
+            <button class="btn-switch" onclick={handleSwitchProfile}>Switch</button>
+        {/if}
+        {#if isAdmin}
+            <button class="btn-logout" onclick={handleLogout}>Log out</button>
+        {/if}
+    </div>
 </nav>
 {/if}
 
@@ -74,46 +77,86 @@
 <style>
     nav {
         display: flex;
-        gap: 0;
-        background: #111;
-        border-bottom: 1px solid #333;
-        padding: 0 1rem;
         align-items: center;
+        gap: 0;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+        padding: 0 20px;
+        height: 48px;
+        position: sticky;
+        top: 0;
+        z-index: 100;
     }
-    nav a {
-        color: #888;
+
+    .logo {
+        font-family: var(--font-display);
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--amber);
         text-decoration: none;
-        padding: 0.65rem 1rem;
-        font-size: 0.9rem;
-        border-bottom: 2px solid transparent;
-        margin-bottom: -1px;
+        letter-spacing: 0.5px;
+        margin-right: 16px;
+        flex-shrink: 0;
     }
-    nav a.active { color: #4af; border-bottom-color: #4af; }
-    nav a:hover:not(.active) { color: #ccc; }
-    .spacer { flex: 1; }
+    .logo:hover { color: var(--amber-glow); }
+
+    .nav-links {
+        display: flex;
+        align-items: center;
+        flex: 1;
+    }
+
+    .nav-links a {
+        color: var(--text-2);
+        text-decoration: none;
+        font-size: 13px;
+        font-weight: 500;
+        padding: 6px 12px;
+        border-radius: var(--radius);
+        transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover:not(.active) { color: var(--text); }
+    .nav-links a.active {
+        color: var(--amber);
+        background: rgba(232, 160, 32, 0.08);
+    }
+
+    .nav-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
     .profile-name {
-        font-size: 0.85rem;
-        color: #888;
-        padding: 0 0.5rem;
+        font-size: 12px;
+        color: var(--text-2);
     }
-    .switch-btn {
+
+    .btn-switch {
+        background: transparent;
+        border: 1px solid var(--border-2);
+        color: var(--text-2);
+        padding: 3px 9px;
+        border-radius: var(--radius);
+        font-size: 11px;
+        font-weight: 500;
         cursor: pointer;
-        background: none;
-        border: 1px solid #444;
-        color: #666;
-        padding: 0.2rem 0.6rem;
-        border-radius: 4px;
-        font-size: 0.8rem;
-        margin-right: 0.5rem;
+        transition: border-color 0.15s, color 0.15s;
+        font-family: var(--font-ui);
     }
-    .switch-btn:hover { color: #4af; border-color: #4af; }
-    .logout {
+    .btn-switch:hover { border-color: var(--amber); color: var(--amber); }
+
+    .btn-logout {
+        background: transparent;
+        border: 1px solid var(--border-2);
+        color: var(--text-2);
+        padding: 3px 9px;
+        border-radius: var(--radius);
+        font-size: 11px;
+        font-weight: 500;
         cursor: pointer;
-        background: none;
-        border: 1px solid #555;
-        color: #888;
-        padding: 0.25rem 0.75rem;
-        border-radius: 4px;
-        font-size: 0.85rem;
+        transition: border-color 0.15s, color 0.15s;
+        font-family: var(--font-ui);
     }
+    .btn-logout:hover { border-color: var(--red); color: var(--red); }
 </style>
