@@ -129,6 +129,38 @@ impl Db {
         Ok(())
     }
 
+    /// Associate a profile with a session so it can be retrieved without re-auth.
+    pub fn set_session_profile(&self, token: &str, profile_id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE sessions SET profile_id=?1 WHERE token=?2",
+            rusqlite::params![profile_id, token],
+        )?;
+        Ok(())
+    }
+
+    /// Return the profile linked to this session token, if any and if session is still valid.
+    pub fn get_session_profile(&self, token: &str) -> Result<Option<Profile>> {
+        let now = Utc::now().to_rfc3339();
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT p.id, p.name, p.linked_email, p.is_admin_profile, p.created_at
+             FROM sessions s
+             JOIN profiles p ON p.id = s.profile_id
+             WHERE s.token=?1 AND s.expires_at > ?2",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![token, now], |row| {
+            Ok(Profile {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                linked_email: row.get(2)?,
+                is_admin_profile: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?;
+        rows.next().transpose().map_err(Into::into)
+    }
+
     pub fn insert_channel(&self, url: &str, name: &str) -> Result<Channel> {
         let id = Uuid::new_v4().to_string();
         let conn = self.conn.lock().unwrap();
@@ -679,8 +711,8 @@ const MIGRATIONS: &[&str] = &[
     ",
     // ── v2: add youtube_channel_id to channels ────────────────────────────────
     "ALTER TABLE channels ADD COLUMN youtube_channel_id TEXT;",
-    // ── v3: add your next migration here ─────────────────────────────────────
-    // "ALTER TABLE ... ADD COLUMN ...;",
+    // ── v3: link sessions to their admin profile ──────────────────────────────
+    "ALTER TABLE sessions ADD COLUMN profile_id INTEGER REFERENCES profiles(id) ON DELETE SET NULL;",
 ];
 
 fn run_migrations(conn: &Connection) -> Result<()> {

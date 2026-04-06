@@ -87,6 +87,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/login", get(routes::auth::device_login))
         .route("/api/auth/poll", get(routes::auth::device_poll))
         .route("/api/auth/me", get(routes::auth::me))
+        .route("/api/auth/admin-profile", get(routes::auth::admin_profile))
         .route("/api/logout", post(routes::auth::logout))
         .route("/api/jobs", post(routes::jobs::submit_job))
         .route("/api/jobs", get(routes::jobs::list_jobs))

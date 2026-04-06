@@ -226,6 +226,13 @@ export async function clearProfileSession(): Promise<void> {
     await fetch('/api/profile-session', { method: 'DELETE' });
 }
 
+/** Returns the admin profile linked to the current session, or null if not logged in. */
+export async function getAdminProfile(): Promise<Profile | null> {
+    const res = await fetch('/api/auth/admin-profile');
+    if (!res.ok) return null;
+    return res.json();
+}
+
 export async function listProfileChannelIds(profileId: number): Promise<string[]> {
     const res = await fetch(`/api/profiles/${profileId}/channels`);
     if (!res.ok) throw new Error(`listProfileChannelIds failed: ${res.status}`);

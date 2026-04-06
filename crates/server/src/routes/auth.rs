@@ -359,6 +359,13 @@ pub async fn device_poll(
         }
     };
 
+    // Link the admin profile to the session so /api/auth/admin-profile can return it
+    if let Some(profile_id) = admin_profile_id {
+        if let Err(e) = state.db.set_session_profile(&session_token, profile_id) {
+            warn!("set_session_profile: {e}");
+        }
+    }
+
     // Clean up state
     state.oauth_states.lock().unwrap().remove(&params.token);
 
@@ -400,6 +407,27 @@ pub async fn me(State(state): State<AppState>, SessionToken(token): SessionToken
     match token {
         Some(t) if state.db.is_valid_session(&t).unwrap_or(false) => StatusCode::OK,
         _ => StatusCode::UNAUTHORIZED,
+    }
+}
+
+// ── Admin profile ─────────────────────────────────────────────────────────────
+
+/// Return the profile linked to the current admin session (used to switch back
+/// to admin without re-authenticating).
+pub async fn admin_profile(
+    State(state): State<AppState>,
+    SessionToken(token): SessionToken,
+) -> impl IntoResponse {
+    let Some(t) = token else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    match state.db.get_session_profile(&t) {
+        Ok(Some(profile)) => Json(profile).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            warn!("get_session_profile: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
     }
 }
 

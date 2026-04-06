@@ -1,16 +1,17 @@
 <script lang="ts">
     import { goto } from '$app/navigation';
-    import { listProfiles, setProfileSession, type Profile } from '$lib/api';
+    import { listProfiles, setProfileSession, getAdminProfile, type Profile } from '$lib/api';
     import { onMount } from 'svelte';
 
     let profiles = $state<Profile[]>([]);
+    let adminProfile = $state<Profile | null>(null);
     let loading = $state(true);
     let error = $state('');
     let selecting = $state<number | null>(null);
 
     onMount(async () => {
         try {
-            profiles = await listProfiles();
+            [profiles, adminProfile] = await Promise.all([listProfiles(), getAdminProfile()]);
         } catch (e) {
             error = e instanceof Error ? e.message : 'Failed to load profiles';
         } finally {
@@ -37,7 +38,7 @@
         <p class="hint">Loading profiles…</p>
     {:else if error}
         <p class="error">{error}</p>
-    {:else if profiles.length === 0}
+    {:else if profiles.length === 0 && !adminProfile}
         <p class="hint">No profiles yet. Ask an admin to create one, or log in as admin below.</p>
     {:else}
         <div class="grid">
@@ -54,12 +55,27 @@
                     {/if}
                 </button>
             {/each}
+            {#if adminProfile}
+                <button
+                    class="card admin-card"
+                    disabled={selecting !== null}
+                    onclick={() => selectProfile(adminProfile!)}
+                >
+                    <div class="avatar admin-avatar">⚙</div>
+                    <span class="name">Admin</span>
+                    {#if selecting === adminProfile.id}
+                        <span class="loading-dot">…</span>
+                    {/if}
+                </button>
+            {/if}
         </div>
     {/if}
 
-    <div class="login-row">
-        <a href="/login" class="login-link">Admin login ↗</a>
-    </div>
+    {#if !adminProfile}
+        <div class="login-row">
+            <a href="/login" class="login-link">Admin login ↗</a>
+        </div>
+    {/if}
 </main>
 
 <style>
@@ -114,6 +130,9 @@
     }
     .name { color: #ccc; font-size: 0.95rem; }
     .loading-dot { color: #888; font-size: 0.8rem; }
+    .admin-card { border-color: #555; }
+    .admin-card:hover:not(:disabled) { border-color: #fa4; }
+    .admin-avatar { background: #555; color: #ddd; font-size: 1.2rem; }
     .login-row { margin-top: 1.5rem; }
     .login-link { color: #666; font-size: 0.85rem; text-decoration: none; }
     .login-link:hover { color: #4af; text-decoration: underline; }
