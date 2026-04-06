@@ -1,18 +1,21 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import {
-        listChannels, listAllChannels, listProfileChannelIds,
+        listChannels, listAllChannels,
         subscribeChannel, unsubscribeChannel, getProfileSession,
         type Channel,
     } from '$lib/api';
+    import PageHeader from '$lib/components/PageHeader.svelte';
+    import Button from '$lib/components/Button.svelte';
+    import EmptyState from '$lib/components/EmptyState.svelte';
 
-    let channels = $state<Channel[]>([]);         // subscribed channels
-    let allChannels = $state<Channel[]>([]);       // all available channels
-    let subscribedIds = $state(new Set<string>()); // for quick lookup
+    let channels = $state<Channel[]>([]);
+    let allChannels = $state<Channel[]>([]);
+    let subscribedIds = $state(new Set<string>());
     let error = $state('');
     let showAll = $state(false);
     let profileId = $state<number | null>(null);
-    let toggling = $state<string | null>(null);   // channel id being toggled
+    let toggling = $state<string | null>(null);
 
     onMount(async () => {
         try {
@@ -23,9 +26,7 @@
             profileId = session?.id ?? null;
             channels = subbed;
             subscribedIds = new Set(subbed.map(c => c.id));
-
             if (profileId) {
-                // Pre-load all channels for subscription management
                 allChannels = await listAllChannels();
             }
         } catch (e: unknown) {
@@ -40,7 +41,7 @@
             if (subscribedIds.has(channel.id)) {
                 await unsubscribeChannel(profileId, channel.id);
                 subscribedIds.delete(channel.id);
-                subscribedIds = new Set(subscribedIds); // trigger reactivity
+                subscribedIds = new Set(subscribedIds);
                 channels = channels.filter(c => c.id !== channel.id);
             } else {
                 await subscribeChannel(profileId, channel.id);
@@ -65,34 +66,30 @@
     }
 
     const displayChannels = $derived(showAll ? allChannels : channels);
+    const channelCountText = $derived(`${displayChannels.length} channel${displayChannels.length === 1 ? '' : 's'}`);
 </script>
 
-<main>
+<div class="page">
     {#if error}
-        <p class="error">{error}</p>
+        <p class="msg-error">{error}</p>
     {:else}
-        <div class="toolbar">
-            {#if profileId && allChannels.length > 0}
-                <label class="toggle-label">
-                    <input
-                        type="checkbox"
-                        checked={showAll}
-                        onchange={() => { showAll = !showAll; }}
-                    />
-                    Show all channels
-                </label>
-            {/if}
-        </div>
+        <PageHeader title="Your Channels" subtitle={channelCountText}>
+            {#snippet actions()}
+                {#if profileId && allChannels.length > 0}
+                    <label class="show-all-toggle">
+                        <input
+                            type="checkbox"
+                            checked={showAll}
+                            onchange={() => { showAll = !showAll; }}
+                        />
+                        Show all
+                    </label>
+                {/if}
+            {/snippet}
+        </PageHeader>
 
         {#if displayChannels.length === 0 && !showAll}
-            <p class="empty">
-                You haven't subscribed to any channels yet.
-                {#if profileId}
-                    Toggle "Show all channels" above to find and subscribe to channels.
-                {:else}
-                    An admin can add channels from the Admin page.
-                {/if}
-            </p>
+            <EmptyState message="You haven't subscribed to any channels yet. Toggle 'Show all' to find and subscribe." />
         {:else}
             <div class="grid">
                 {#each displayChannels as channel (channel.id)}
@@ -102,9 +99,9 @@
                             <div class="card-meta">Synced {timeAgo(channel.last_synced_at)}</div>
                         </a>
                         {#if profileId && showAll}
-                            <button
-                                class="sub-btn"
-                                class:subscribed={subscribedIds.has(channel.id)}
+                            <Button
+                                variant={subscribedIds.has(channel.id) ? 'secondary' : 'primary'}
+                                size="sm"
                                 disabled={toggling === channel.id}
                                 onclick={(e) => { e.preventDefault(); toggleSubscription(channel); }}
                             >
@@ -115,57 +112,50 @@
                                 {:else}
                                     + Subscribe
                                 {/if}
-                            </button>
+                            </Button>
                         {/if}
                     </div>
                 {/each}
             </div>
         {/if}
     {/if}
-</main>
+</div>
 
 <style>
-    main { padding: 1rem; font-family: sans-serif; }
-    .toolbar { margin-bottom: 1rem; display: flex; align-items: center; gap: 1rem; }
-    .toggle-label {
+    .page { padding: 28px 24px; }
+
+    .show-all-toggle {
         display: flex;
         align-items: center;
-        gap: 0.4rem;
-        font-size: 0.85rem;
-        color: #888;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-2);
         cursor: pointer;
         user-select: none;
     }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.75rem; }
-    .card-wrap { display: flex; flex-direction: column; gap: 0.3rem; }
+    .show-all-toggle input { accent-color: var(--amber); width: 13px; height: 13px; }
+
+    .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+        gap: 10px;
+    }
+    .card-wrap { display: flex; flex-direction: column; gap: 5px; }
+
     .card {
         display: block;
-        background: #1e1e2e;
-        border: 1px solid #2a2a3a;
-        border-radius: 8px;
-        padding: 1rem;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 14px 14px 12px;
         text-decoration: none;
-        color: inherit;
-        transition: border-color 0.15s;
+        transition: border-color 0.15s, background 0.15s;
     }
-    .card:hover { border-color: #4af; }
-    .card.unsubscribed { opacity: 0.55; }
-    .card-name { font-weight: 600; color: #ddd; margin-bottom: 0.3rem; }
-    .card-meta { font-size: 0.8rem; color: #666; }
-    .sub-btn {
-        width: 100%;
-        padding: 0.3rem 0;
-        font-size: 0.78rem;
-        border-radius: 4px;
-        border: 1px solid #444;
-        background: #1a1a2a;
-        color: #888;
-        cursor: pointer;
-        transition: background 0.12s, color 0.12s, border-color 0.12s;
-    }
-    .sub-btn:hover:not(:disabled) { background: #22223a; color: #4af; border-color: #4af; }
-    .sub-btn.subscribed { color: #4c4; border-color: #4c4; }
-    .sub-btn:disabled { opacity: 0.5; cursor: default; }
-    .empty { color: #888; font-style: italic; }
-    .error { color: red; }
+    .card:hover { border-color: var(--amber); background: var(--surface-3); }
+    .card.unsubscribed { opacity: 0.4; }
+
+    .card-name { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+    .card-meta { font-size: 11px; color: var(--text-3); }
+
+    .msg-error { color: var(--red); font-size: 13px; padding: 28px 24px; }
 </style>
