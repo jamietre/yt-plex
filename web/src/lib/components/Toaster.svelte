@@ -3,18 +3,16 @@
     import { toasts } from '$lib/toast';
 </script>
 
-{#if $toasts.length > 0}
-    <div class="toaster">
-        {#each $toasts as t (t.id)}
-            <div class="toast toast-{t.variant}">
-                <span class="icon">
-                    {#if t.variant === 'error'}✕{:else}✓{/if}
-                </span>
-                <span class="message">{t.message}</span>
-            </div>
-        {/each}
-    </div>
-{/if}
+<div class="toaster">
+    {#each $toasts as t (t.id)}
+        <div class="toast toast-{t.variant}">
+            <span class="icon">
+                {#if t.variant === 'error'}✕{:else}✓{/if}
+            </span>
+            <span class="message">{t.message}</span>
+        </div>
+    {/each}
+</div>
 
 <style>
     .toaster {
@@ -38,6 +36,10 @@
         font-size: 13px;
         box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
         animation: slide-in 0.2s ease;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .toast { animation: none; }
     }
 
     .toast-success {
