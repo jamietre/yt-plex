@@ -13,7 +13,7 @@ interface ConfirmState extends ConfirmOptions {
 
 export const confirmState = writable<ConfirmState | null>(null);
 
-export function confirm(options: ConfirmOptions): Promise<boolean> {
+export function showConfirm(options: ConfirmOptions): Promise<boolean> {
 	return new Promise((resolve) => {
 		confirmState.set({ ...options, resolve });
 	});
