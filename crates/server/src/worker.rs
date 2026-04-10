@@ -149,9 +149,18 @@ async fn tick(
         (cfg.output.base_path.clone(), cfg.output.path_template.clone())
     };
 
-    let channel_id = meta.channel_id.as_deref().unwrap_or("");
-    let rel_path = template::render(&path_template, &meta.channel, channel_id, &date, &meta.title, &meta.ext, &meta.id);
-    let dest: PathBuf = PathBuf::from(&base_path).join(&rel_path);
+    let yt_channel_id = meta.channel_id.as_deref().unwrap_or("");
+    let path_prefix = db.get_channel_by_youtube_id(yt_channel_id)
+        .ok()
+        .flatten()
+        .and_then(|ch| ch.path_prefix)
+        .filter(|p| !p.is_empty());
+
+    let rel_path = template::render(&path_template, &meta.channel, yt_channel_id, &date, &meta.title, &meta.ext, &meta.id);
+    let dest: PathBuf = match path_prefix.as_deref() {
+        Some(prefix) => PathBuf::from(&base_path).join(prefix).join(&rel_path),
+        None         => PathBuf::from(&base_path).join(&rel_path),
+    };
     let src: PathBuf = tmp.path().join(format!("{}.{}", meta.id, meta.ext));
 
     // Mark as copying
@@ -227,6 +236,32 @@ async fn tick(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    fn dest_path(base: &str, prefix: Option<&str>, rel: &str) -> PathBuf {
+        match prefix.filter(|p| !p.is_empty()) {
+            Some(p) => PathBuf::from(base).join(p).join(rel),
+            None    => PathBuf::from(base).join(rel),
+        }
+    }
+
+    #[test]
+    fn prefix_is_inserted_between_base_and_template() {
+        let path = dest_path("/mnt/plex", Some("Tech"), "Chan/video.mp4");
+        assert_eq!(path, PathBuf::from("/mnt/plex/Tech/Chan/video.mp4"));
+    }
+
+    #[test]
+    fn no_prefix_gives_original_layout() {
+        let path = dest_path("/mnt/plex", None, "Chan/video.mp4");
+        assert_eq!(path, PathBuf::from("/mnt/plex/Chan/video.mp4"));
+    }
+
+    #[test]
+    fn empty_prefix_is_ignored() {
+        let path = dest_path("/mnt/plex", Some(""), "Chan/video.mp4");
+        assert_eq!(path, PathBuf::from("/mnt/plex/Chan/video.mp4"));
+    }
 
     #[test]
     fn parse_ytdlp_output_extracts_fields() {
