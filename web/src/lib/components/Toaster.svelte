@@ -1,16 +1,16 @@
 <!-- web/src/lib/components/Toaster.svelte -->
 <script lang="ts">
-    import { toasts } from '$lib/toast';
+    import { toasts, dismissToast } from '$lib/toast';
 </script>
 
 <div class="toaster">
     {#each $toasts as t (t.id)}
-        <div class="toast toast-{t.variant}">
+        <button class="toast toast-{t.variant}" onclick={() => dismissToast(t.id)}>
             <span class="icon">
-                {#if t.variant === 'error'}✕{:else}✓{/if}
+                {#if t.variant === 'error'}✕{:else if t.variant === 'info'}ℹ{:else}✓{/if}
             </span>
             <span class="message">{t.message}</span>
-        </div>
+        </button>
     {/each}
 </div>
 
@@ -23,7 +23,6 @@
         flex-direction: column;
         gap: 8px;
         z-index: 1100;
-        pointer-events: none;
     }
 
     .toast {
@@ -36,6 +35,9 @@
         font-size: 13px;
         box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
         animation: slide-in 0.2s ease;
+        cursor: pointer;
+        border: none;
+        text-align: left;
     }
 
     @media (prefers-reduced-motion: reduce) {

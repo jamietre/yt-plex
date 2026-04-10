@@ -7,14 +7,19 @@ export interface ConfirmOptions {
 	cancelLabel?: string;
 }
 
-interface ConfirmState extends ConfirmOptions {
-	resolve: (value: boolean) => void;
-}
+export const confirmState = writable<ConfirmOptions | null>(null);
 
-export const confirmState = writable<ConfirmState | null>(null);
+let _resolve: ((value: boolean) => void) | null = null;
 
 export function showConfirm(options: ConfirmOptions): Promise<boolean> {
 	return new Promise((resolve) => {
-		confirmState.set({ ...options, resolve });
+		_resolve = resolve;
+		confirmState.set(options);
 	});
+}
+
+export function resolveConfirm(value: boolean) {
+	_resolve?.(value);
+	_resolve = null;
+	confirmState.set(null);
 }

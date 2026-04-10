@@ -1,16 +1,9 @@
 <!-- web/src/lib/components/ConfirmDialog.svelte -->
 <script lang="ts">
-    import { confirmState } from '$lib/confirm';
-
-    function respond(value: boolean) {
-        confirmState.update(s => {
-            s?.resolve(value);
-            return null;
-        });
-    }
+    import { confirmState, resolveConfirm } from '$lib/confirm';
 
     function onKeydown(e: KeyboardEvent) {
-        if ($confirmState && e.key === 'Escape') respond(false);
+        if ($confirmState && e.key === 'Escape') resolveConfirm(false);
     }
 </script>
 
@@ -18,17 +11,17 @@
 
 {#if $confirmState}
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div class="backdrop" onclick={() => respond(false)}>
+    <div class="backdrop" onclick={() => resolveConfirm(false)}>
         <div class="dialog" role="dialog" aria-modal="true"
              aria-labelledby="confirm-title" aria-describedby="confirm-msg"
              onclick={(e) => e.stopPropagation()}>
             <p class="title" id="confirm-title">{$confirmState.title}</p>
             <p class="message" id="confirm-msg">{$confirmState.message}</p>
             <div class="actions">
-                <button class="btn-cancel" onclick={() => respond(false)} autofocus>
+                <button class="btn-cancel" onclick={() => resolveConfirm(false)} autofocus>
                     {$confirmState.cancelLabel ?? 'Cancel'}
                 </button>
-                <button class="btn-confirm" onclick={() => respond(true)}>
+                <button class="btn-confirm" onclick={() => resolveConfirm(true)}>
                     {$confirmState.confirmLabel ?? 'Confirm'}
                 </button>
             </div>

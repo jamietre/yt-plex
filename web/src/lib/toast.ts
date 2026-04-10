@@ -20,7 +20,9 @@ export function toast(message: string, options?: { variant?: ToastVariant; durat
 
     toasts.update(ts => [...ts, { id, message, variant }]);
 
-    setTimeout(() => {
-        toasts.update(ts => ts.filter(t => t.id !== id));
-    }, duration);
+    setTimeout(() => dismissToast(id), duration);
+}
+
+export function dismissToast(id: number) {
+    toasts.update(ts => ts.filter(t => t.id !== id));
 }
