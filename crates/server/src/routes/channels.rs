@@ -10,6 +10,27 @@ use tracing::{error, info, warn};
 
 use crate::{routes::auth::SessionToken, routes::profiles::ProfileCookie, sync, AppState};
 
+/// Returns the trimmed prefix, or `Err` with a user-facing message.
+/// Empty / whitespace-only input returns `Ok("")` (treated as no prefix).
+fn validate_path_prefix(raw: &str) -> Result<String, &'static str> {
+    let s = raw.trim().to_owned();
+    if s.is_empty() {
+        return Ok(s);
+    }
+    if s.starts_with('/') || s.starts_with('\\') {
+        return Err("Path prefix must not start with / or \\");
+    }
+    if s.contains('\0') {
+        return Err("Path prefix must not contain null bytes");
+    }
+    for segment in s.split('/') {
+        if segment == ".." {
+            return Err("Path prefix must not contain '..' segments");
+        }
+    }
+    Ok(s)
+}
+
 fn is_admin(state: &AppState, token: Option<&str>) -> bool {
     token
         .and_then(|t| state.db.is_valid_session(t).ok())
@@ -45,6 +66,7 @@ pub async fn list_channels(
 pub struct AddChannelRequest {
     pub url: String,
     pub name: String,
+    pub path_prefix: Option<String>,
 }
 
 pub async fn add_channel(
@@ -55,7 +77,11 @@ pub async fn add_channel(
     if !is_admin(&state, token.as_deref()) {
         return (StatusCode::UNAUTHORIZED, "Admin required").into_response();
     }
-    let channel = match state.db.insert_channel(&body.url, &body.name, None) {
+    let prefix = match validate_path_prefix(body.path_prefix.as_deref().unwrap_or("")) {
+        Ok(p) => if p.is_empty() { None } else { Some(p) },
+        Err(msg) => return (StatusCode::BAD_REQUEST, msg).into_response(),
+    };
+    let channel = match state.db.insert_channel(&body.url, &body.name, prefix.as_deref()) {
         Ok(ch) => ch,
         Err(e) => {
             error!("insert_channel: {e}");
@@ -73,6 +99,35 @@ pub async fn add_channel(
         }
     });
     Json(channel).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct UpdateChannelRequest {
+    pub name: String,
+    pub url: String,
+    pub path_prefix: Option<String>,
+}
+
+pub async fn update_channel(
+    State(state): State<AppState>,
+    SessionToken(token): SessionToken,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateChannelRequest>,
+) -> impl IntoResponse {
+    if !is_admin(&state, token.as_deref()) {
+        return (StatusCode::UNAUTHORIZED, "Admin required").into_response();
+    }
+    let prefix = match validate_path_prefix(body.path_prefix.as_deref().unwrap_or("")) {
+        Ok(p) => if p.is_empty() { None } else { Some(p) },
+        Err(msg) => return (StatusCode::BAD_REQUEST, msg).into_response(),
+    };
+    match state.db.update_channel(&id, &body.name, &body.url, prefix.as_deref()) {
+        Ok(ch) => Json(ch).into_response(),
+        Err(e) => {
+            error!("update_channel: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Server error").into_response()
+        }
+    }
 }
 
 pub async fn delete_channel(
@@ -227,4 +282,36 @@ pub struct VideoQueryParams {
     pub q: Option<String>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_path_prefix;
+
+    #[test]
+    fn valid_prefixes_pass() {
+        assert!(validate_path_prefix("Tech").is_ok());
+        assert!(validate_path_prefix("Music/Classical").is_ok());
+        assert!(validate_path_prefix("").is_ok()); // empty = no prefix
+        assert!(validate_path_prefix("  ").is_ok()); // whitespace-only = no prefix
+        assert!(validate_path_prefix("Ñoño").is_ok()); // unicode ok
+    }
+
+    #[test]
+    fn dotdot_traversal_rejected() {
+        assert!(validate_path_prefix("../secret").is_err());
+        assert!(validate_path_prefix("foo/../bar").is_err());
+        assert!(validate_path_prefix("..").is_err());
+    }
+
+    #[test]
+    fn leading_slash_rejected() {
+        assert!(validate_path_prefix("/absolute").is_err());
+        assert!(validate_path_prefix("\\windows").is_err());
+    }
+
+    #[test]
+    fn null_byte_rejected() {
+        assert!(validate_path_prefix("foo\0bar").is_err());
+    }
 }

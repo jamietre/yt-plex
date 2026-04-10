@@ -127,6 +127,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/channels", get(routes::channels::list_channels))
         .route("/api/channels", post(routes::channels::add_channel))
         .route("/api/channels/{id}", delete(routes::channels::delete_channel))
+        .route("/api/channels/{id}", put(routes::channels::update_channel))
         .route("/api/channels/{id}/sync", post(routes::channels::sync_channel))
         .route("/api/channels/{id}/regen-metadata", post(routes::channels::regen_metadata))
         .route("/api/channels/{id}/videos", get(routes::channels::list_channel_videos))
