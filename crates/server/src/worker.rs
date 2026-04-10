@@ -59,6 +59,8 @@ async fn tick(
     let updated = db.get_job(&job.id)?.unwrap();
     hub.broadcast(&yt_plex_common::models::WsMessage::from_job(&updated));
 
+    let extra_args = config.read().unwrap().download.extra_args.clone();
+
     let tmp = tempfile::tempdir()?;
     let out_template = tmp
         .path()
@@ -68,7 +70,9 @@ async fn tick(
 
     // Run yt-dlp, streaming stderr for progress updates
     let mut child = Command::new("yt-dlp")
-        .args(["--newline", "--print-json", "-o", &out_template, &job.url])
+        .args(["--newline", "--print-json", "--write-info-json", "-o", &out_template])
+        .args(&extra_args)
+        .arg(&job.url)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -177,6 +181,19 @@ async fn tick(
         } else {
             return Err(e)
                 .with_context(|| format!("moving {} → {}", src.display(), dest.display()));
+        }
+    }
+
+    // Move the .info.json sidecar alongside the video so the Plex YouTube agent
+    // can read metadata without hitting the YouTube API.
+    let src_info = tmp.path().join(format!("{}.info.json", meta.id));
+    if src_info.exists() {
+        let dest_info = dest.with_extension("").with_extension("info.json");
+        // Copy rather than rename so a cross-device failure doesn't silently drop it
+        if let Err(e) = tokio::fs::copy(&src_info, &dest_info).await {
+            warn!("could not copy .info.json sidecar: {e:#}");
+        } else {
+            tokio::fs::remove_file(&src_info).await.ok();
         }
     }
 

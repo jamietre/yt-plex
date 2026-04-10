@@ -11,6 +11,8 @@ pub struct Config {
     pub output: OutputConfig,
     #[serde(default)]
     pub sync: SyncConfig,
+    #[serde(default)]
+    pub download: DownloadConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,10 +25,30 @@ pub struct AuthConfig {
     pub admin_emails: Vec<String>,
 }
 
+/// Which Google OAuth flow to use for admin login.
+/// - `authorization_code` (default): browser redirect flow — requires a publicly
+///   reachable redirect URI registered in Google Cloud Console (Web application client).
+/// - `device`: device authorization grant — no redirect URI needed, works on private
+///   networks. Requires a TV/Limited Input Device OAuth client in Google Cloud Console.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuthFlow {
+    AuthorizationCode,
+    #[default]
+    Device,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GoogleOAuthConfig {
     pub client_id: String,
     pub client_secret: String,
+    /// Which login flow to use. Defaults to `authorization_code`.
+    #[serde(default)]
+    pub flow: OAuthFlow,
+    /// Required for `authorization_code` flow. Full callback URL registered in
+    /// Google Cloud Console, e.g. https://example.com:4447/api/auth/callback
+    #[serde(default)]
+    pub redirect_uri: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +77,14 @@ pub struct OutputConfig {
     pub path_template: String,
     #[serde(default = "default_thumbnail_cache_dir")]
     pub thumbnail_cache_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DownloadConfig {
+    /// Extra arguments passed verbatim to yt-dlp before the URL.
+    /// One argument per element — e.g. ["--cookies", "/path/to/cookies.txt"]
+    #[serde(default)]
+    pub extra_args: Vec<String>,
 }
 
 fn default_interval_hours() -> u64 {
@@ -125,6 +155,7 @@ admin_emails = ["admin@example.com"]
 [google_oauth]
 client_id = "fake_client_id"
 client_secret = "fake_secret"
+redirect_uri = "http://localhost:3000/api/auth/callback"
 
 [plex]
 url = "http://localhost:32400"
@@ -133,7 +164,7 @@ library_section_id = "1"
 
 [output]
 base_path = "/mnt/plex"
-path_template = "{channel}/{date} - {title}.{ext}"
+path_template = "{channel} [{channel_id}]/Season {yyyy}/[{date}] - {title} [{id}].{ext}"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.server.bind, "127.0.0.1:3000");
@@ -142,7 +173,7 @@ path_template = "{channel}/{date} - {title}.{ext}"
         assert_eq!(config.plex.library_section_id, "1");
         assert_eq!(
             config.output.path_template,
-            "{channel}/{date} - {title}.{ext}"
+            "{channel} [{channel_id}]/Season {yyyy}/[{date}] - {title} [{id}].{ext}"
         );
     }
 
@@ -156,6 +187,7 @@ admin_emails = ["admin@example.com"]
 [google_oauth]
 client_id = "cid"
 client_secret = "csec"
+redirect_uri = "http://localhost:3000/api/auth/callback"
 [plex]
 url = "http://localhost:32400"
 token = "tok"
@@ -182,13 +214,14 @@ admin_emails = []
 [google_oauth]
 client_id = "cid"
 client_secret = "csec"
+redirect_uri = "http://localhost:3000/api/auth/callback"
 [plex]
 url = "http://localhost:32400"
 token = "tok"
 library_section_id = "1"
 [output]
 base_path = "/mnt/plex"
-path_template = "{channel}/{date} - {title}.{ext}"
+path_template = "{channel} [{channel_id}]/Season {yyyy}/[{date}] - {title} [{id}].{ext}"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.sync.interval_hours, 6);

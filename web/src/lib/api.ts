@@ -29,39 +29,51 @@ export async function submitJob(url: string): Promise<Job> {
     return res.json();
 }
 
-export interface DeviceLoginResponse {
-  poll_token: string;
-  user_code: string;
-  verification_url: string;
-  expires_in: number;
-  interval: number;
-}
-
-export interface PollResponse {
-  status: 'pending' | 'done' | 'denied' | 'expired' | 'error';
-  interval?: number;
-  message?: string;
-}
-
-export async function startDeviceLogin(): Promise<DeviceLoginResponse> {
-  const res = await fetch('/api/auth/login');
-  if (!res.ok) throw new Error(`${res.status}`);
-  return res.json();
-}
-
-export async function pollDeviceAuth(token: string): Promise<PollResponse> {
-  const res = await fetch(`/api/auth/poll?token=${encodeURIComponent(token)}`);
-  if (!res.ok) throw new Error(`${res.status}`);
-  return res.json();
-}
 
 export async function logout(): Promise<void> {
     await fetch('/api/logout', { method: 'POST' });
 }
 
+export type AuthFlow = 'authorization_code' | 'device';
+
+export async function getAuthFlow(): Promise<AuthFlow> {
+    const res = await fetch('/api/auth/flow');
+    if (!res.ok) return 'authorization_code';
+    const data = await res.json();
+    return data.flow === 'device' ? 'device' : 'authorization_code';
+}
+
+export interface DeviceLoginResponse {
+    poll_token: string;
+    user_code: string;
+    verification_url: string;
+    interval: number;
+    expires_in: number;
+}
+
+export async function startDeviceLogin(): Promise<DeviceLoginResponse> {
+    const res = await fetch('/api/auth/device', { method: 'POST' });
+    if (!res.ok) throw new Error(`startDeviceLogin failed: ${res.status}`);
+    return res.json();
+}
+
+export type PollStatus = 'pending' | 'done' | 'expired';
+
+export async function pollDeviceAuth(pollToken: string): Promise<PollStatus> {
+    const res = await fetch('/api/auth/poll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ poll_token: pollToken }),
+    });
+    if (!res.ok) return 'expired';
+    const data = await res.json();
+    return data.status;
+}
+
 export interface Settings {
     plex: { url: string; token: string; library_section_id: string };
     output: { base_path: string; path_template: string; thumbnail_cache_dir: string };
+    download: { extra_args: string[] };
 }
 
 export async function getSettings(): Promise<Settings> {
@@ -78,6 +90,22 @@ export async function updateSettings(s: Settings): Promise<void> {
     });
     if (!res.ok) throw new Error(`updateSettings failed: ${res.status}`);
 }
+
+export interface PlexLibrary {
+    id: string;
+    title: string;
+    lib_type: string;
+}
+
+export async function listPlexLibraries(): Promise<PlexLibrary[]> {
+    const res = await fetch('/api/plex/libraries');
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `listPlexLibraries failed: ${res.status}`);
+    }
+    return res.json();
+}
+
 
 export type VideoStatus = 'new' | 'in_progress' | 'downloaded' | 'ignored';
 
@@ -140,6 +168,12 @@ export async function deleteChannel(id: string): Promise<void> {
 export async function syncChannel(id: string): Promise<void> {
     const res = await fetch(`/api/channels/${id}/sync`, { method: 'POST' });
     if (!res.ok) throw new Error(`syncChannel failed: ${res.status}`);
+}
+
+export async function regenChannelMetadata(id: string): Promise<{ queued: number }> {
+    const res = await fetch(`/api/channels/${id}/regen-metadata`, { method: 'POST' });
+    if (!res.ok) throw new Error(`regenMetadata failed: ${res.status}`);
+    return res.json();
 }
 
 export async function rescanFilesystem(): Promise<void> {

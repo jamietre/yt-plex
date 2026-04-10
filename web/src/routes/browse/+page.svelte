@@ -1,7 +1,8 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import {
-        listChannels, listAllChannels,
+        listAllChannels,
+        listProfileChannelIds,
         subscribeChannel, unsubscribeChannel, getProfileSession,
         type Channel,
     } from '$lib/api';
@@ -19,15 +20,20 @@
 
     onMount(async () => {
         try {
-            const [session, subbed] = await Promise.all([
-                getProfileSession(),
-                listChannels(),
-            ]);
+            const session = await getProfileSession();
             profileId = session?.id ?? null;
-            channels = subbed;
-            subscribedIds = new Set(subbed.map(c => c.id));
+
             if (profileId) {
+                const [all, ids] = await Promise.all([
+                    listAllChannels(),
+                    listProfileChannelIds(profileId),
+                ]);
+                allChannels = all;
+                subscribedIds = new Set(ids);
+                channels = all.filter(c => subscribedIds.has(c.id));
+            } else {
                 allChannels = await listAllChannels();
+                channels = allChannels;
             }
         } catch (e: unknown) {
             error = e instanceof Error ? e.message : 'Failed to load channels';

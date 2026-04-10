@@ -4,9 +4,9 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, info, warn};
 
 use crate::{routes::auth::SessionToken, routes::profiles::ProfileCookie, sync, AppState};
 
@@ -159,6 +159,65 @@ pub async fn rescan_filesystem(
         }
     });
     StatusCode::ACCEPTED.into_response()
+}
+
+#[derive(Serialize)]
+pub struct RegenMetaResponse {
+    pub queued: usize,
+}
+
+/// POST /api/channels/{id}/regen-metadata
+/// Re-runs yt-dlp --skip-download --write-info-json for every downloaded video
+/// in the channel, regenerating .info.json sidecars without redownloading.
+pub async fn regen_metadata(
+    State(state): State<AppState>,
+    SessionToken(token): SessionToken,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    if !is_admin(&state, token.as_deref()) {
+        return (StatusCode::UNAUTHORIZED, "Admin required").into_response();
+    }
+
+    let videos = match state.db.list_downloaded_videos_for_channel(&id) {
+        Ok(v) => v,
+        Err(e) => {
+            error!("list_downloaded_videos_for_channel: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Server error").into_response();
+        }
+    };
+
+    let count = videos.len();
+    let extra_args = state.config.read().unwrap().download.extra_args.clone();
+
+    tokio::spawn(async move {
+        for (youtube_id, file_path) in videos {
+            // Derive the output template from the existing file path so yt-dlp
+            // writes <name>.info.json alongside the video file.
+            let stem = std::path::Path::new(&file_path)
+                .with_extension("")
+                .to_string_lossy()
+                .into_owned();
+            let out_template = format!("{}.%(ext)s", stem);
+            let url = format!("https://www.youtube.com/watch?v={}", youtube_id);
+
+            info!("regen metadata: {youtube_id}");
+            let status = tokio::process::Command::new("yt-dlp")
+                .args(["--skip-download", "--write-info-json", "--no-clean-info-json", "-o", &out_template])
+                .args(&extra_args)
+                .arg(&url)
+                .status()
+                .await;
+
+            match status {
+                Ok(s) if s.success() => info!("regen ok: {youtube_id}"),
+                Ok(s) => warn!("regen failed for {youtube_id}: exit {s}"),
+                Err(e) => warn!("regen error for {youtube_id}: {e}"),
+            }
+        }
+        info!("regen metadata complete");
+    });
+
+    Json(RegenMetaResponse { queued: count }).into_response()
 }
 
 #[derive(Deserialize)]

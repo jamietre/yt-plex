@@ -1,3 +1,6 @@
+[env]
+_.file = ".env"
+
 [tools]
 node = "24"
 pnpm = "10"
@@ -34,3 +37,30 @@ depends = ["dev-server", "web-dev"]
 [tasks.db-reset]
 description = "Delete the local SQLite database (forces schema re-creation on next server start)"
 run = "rm -f ~/.local/share/yt-plex/db.sqlite ~/.local/share/yt-plex/db.sqlite-wal ~/.local/share/yt-plex/db.sqlite-shm"
+
+[tasks.docker-build]
+description = "Build the yt-plex Docker image"
+run = "docker build -t yt-plex:latest -t PRIVATE_IP_REDACTED:5000/yt-plex:latest ."
+
+[tasks.docker-push]
+description = 'Push yt-plex image to the local registry at PRIVATE_IP_REDACTED:5000'
+run = "docker push PRIVATE_IP_REDACTED:5000/yt-plex:latest"
+
+[tasks.docker-deploy]
+description = 'Push image to registry and redeploy via Komodo API'
+depends = ["docker-push"]
+run = "bash scripts/komodo-deploy.sh"
+
+[tasks.docker-push-config]
+description = 'Push config.toml to $DEPLOY_HOST'
+run = """
+HOST=${DEPLOY_HOST:-root@PRIVATE_IP_REDACTED}
+scp .config/yt-plex/config.toml "$HOST:/docker/yt-plex/config/config.toml"
+"""
+
+[tasks.docker-logs]
+description = 'Tail container logs on $DEPLOY_HOST'
+run = """
+HOST=${DEPLOY_HOST:-root@PRIVATE_IP_REDACTED}
+ssh "$HOST" 'docker logs -f $(docker ps -qf name=yt-plex) 2>/dev/null || echo "Container not running"'
+"""

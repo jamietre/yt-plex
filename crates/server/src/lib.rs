@@ -15,16 +15,34 @@ use axum::{
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+/// State stored server-side for a pending device-flow login.
+#[derive(Clone)]
+pub struct DeviceCodeEntry {
+    pub device_code: String,
+    pub expires_at: Instant,
+}
+
+/// CSRF state entry for the authorization_code flow.
+#[derive(Clone)]
+pub struct OAuthStateEntry {
+    pub expires_at: Instant,
+    /// Origin the login was initiated from (e.g. "http://PRIVATE_IP_REDACTED:32113").
+    /// Used to redirect back to the local app after the public callback completes.
+    pub return_to: Option<String>,
+}
+
+/// Short-lived token bridging the public callback to the local app session cookie.
+#[derive(Clone)]
+pub struct ExchangeTokenEntry {
+    pub session_token: String,
+    pub profile_id: Option<i64>,
+    pub expires_at: Instant,
+}
 use tower_http::trace::TraceLayer;
 use yt_plex_common::config::Config;
 
 use crate::{db::Db, ws::WsHub};
-
-pub struct DeviceCodeEntry {
-    pub google_device_code: String,
-    pub expires_at: Instant,
-    pub interval: u64,
-}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -32,7 +50,12 @@ pub struct AppState {
     pub config: Arc<std::sync::RwLock<Config>>,
     pub config_path: String,
     pub ws_hub: WsHub,
-    pub oauth_states: Arc<Mutex<HashMap<String, DeviceCodeEntry>>>,
+    /// CSRF state tokens (authorization_code flow).
+    pub oauth_states: Arc<Mutex<HashMap<String, OAuthStateEntry>>>,
+    /// Pending device-flow logins: poll_token → DeviceCodeEntry.
+    pub device_codes: Arc<Mutex<HashMap<String, DeviceCodeEntry>>>,
+    /// Short-lived tokens bridging the public callback to the local app.
+    pub exchange_tokens: Arc<Mutex<HashMap<String, ExchangeTokenEntry>>>,
     pub http_client: reqwest::Client,
 }
 
@@ -78,14 +101,20 @@ pub async fn create_app_state(config: Config, config_path: String) -> Result<App
         config_path,
         ws_hub,
         oauth_states: Arc::new(Mutex::new(HashMap::new())),
+        device_codes: Arc::new(Mutex::new(HashMap::new())),
+        exchange_tokens: Arc::new(Mutex::new(HashMap::new())),
         http_client: reqwest::Client::new(),
     })
 }
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
-        .route("/api/auth/login", get(routes::auth::device_login))
-        .route("/api/auth/poll", get(routes::auth::device_poll))
+        .route("/api/auth/flow", get(routes::auth::auth_flow))
+        .route("/api/auth/login", get(routes::auth::oauth_login))
+        .route("/api/auth/callback", get(routes::auth::oauth_callback))
+        .route("/api/auth/exchange", get(routes::auth::exchange))
+        .route("/api/auth/device", post(routes::auth::device_start))
+        .route("/api/auth/poll", post(routes::auth::device_poll))
         .route("/api/auth/me", get(routes::auth::me))
         .route("/api/auth/admin-profile", get(routes::auth::admin_profile))
         .route("/api/logout", post(routes::auth::logout))
@@ -93,10 +122,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/jobs", get(routes::jobs::list_jobs))
         .route("/api/settings", get(routes::settings::get_settings))
         .route("/api/settings", put(routes::settings::update_settings))
+        .route("/api/plex/libraries", get(routes::settings::list_plex_libraries))
+
         .route("/api/channels", get(routes::channels::list_channels))
         .route("/api/channels", post(routes::channels::add_channel))
         .route("/api/channels/{id}", delete(routes::channels::delete_channel))
         .route("/api/channels/{id}/sync", post(routes::channels::sync_channel))
+        .route("/api/channels/{id}/regen-metadata", post(routes::channels::regen_metadata))
         .route("/api/channels/{id}/videos", get(routes::channels::list_channel_videos))
         .route("/api/rescan", post(routes::channels::rescan_filesystem))
         .route("/api/videos/{youtube_id}", get(routes::videos::get_video))

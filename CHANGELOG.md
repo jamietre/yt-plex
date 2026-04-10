@@ -25,6 +25,8 @@
 - `docker-compose.yml` for simple server deployment
 
 ### Fixed
+- **Auth** — switched OAuth flow to `authorization_code` with configurable `redirect_uri`; fixed `redirect_uri_mismatch` caused by wrong `client_id` in config
+- **Theme contrast** — raised `--text-2`, `--text-3`, `--border`, and `--border-2` values for better readability of labels and inactive controls
 - Infinite scroll was triggering dozens of duplicate requests due to stacked `IntersectionObserver` observations from a `$effect` re-running on every state change
 - `published_at` was not updated on re-sync; fixed with `COALESCE` in upsert `ON CONFLICT` clause
 - YouTube link on detail page is now admin-only
@@ -32,6 +34,7 @@
 - WAL/SHM files now included in `db-reset` task
 
 ### Changed
+- **UI restyled** — cinematic dark theme applied across browse, queue, login, select-profile, and video detail pages
 - Search restricted to `title` column only (not description) to reduce false positives
 - `set_video_downloaded` now stores the file path alongside the downloaded timestamp
 - `insert_job` now accepts optional `channel_name` and `title` for display in the queue before metadata is fetched
@@ -40,6 +43,13 @@
 - `WsHub` now derives `Default` via an explicit impl; `new()` delegates to it
 
 ### Added
+- **Regen metadata** — new `POST /api/channels/{id}/regen-metadata` endpoint runs `yt-dlp --skip-download --write-info-json` for all downloaded videos; admin page exposes a "Regen metadata" button per channel
+- **Docker registry deployment** — `Dockerfile` updated to multi-stage build targeting `rust:1.88`; `docker-compose.yml` wired to a local registry; `mise.toml` `docker-build` / `docker-deploy` tasks use Komodo API for redeployment
+- **Config example** — `config.toml.example` documents all supported fields
+- **Preferences page** — `/preferences` route for per-profile display settings (persisted in `localStorage` via `prefs.ts`)
+- **Navigation search** — `navSearch.ts` store allows individual pages to register a search input in the nav bar
+- **`favicon.svg`** — app icon
+- **`scripts/komodo-deploy.sh`** — deploy helper for Komodo stack API
 - `{channel_id}` path template variable — expands to the YouTube channel ID (e.g. `UCxxxxxxxxxxxxxxxx`)
 - DB migration v2: `ALTER TABLE channels ADD COLUMN youtube_channel_id TEXT`
 - Sync captures `%(channel_id)s` from yt-dlp flat-playlist and stores it on the channel record after first sync

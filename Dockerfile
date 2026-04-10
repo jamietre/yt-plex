@@ -12,7 +12,7 @@ RUN cd web && pnpm build
 
 
 # ── Stage 2: Build the Rust binary ───────────────────────────────────────────
-FROM rust:1.86-bookworm AS rust-builder
+FROM rust:1.88-bookworm AS rust-builder
 WORKDIR /app
 
 # Copy workspace manifests first for layer-cached dependency builds.

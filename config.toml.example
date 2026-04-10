@@ -1,0 +1,35 @@
+[server]
+bind = "0.0.0.0:3000"
+
+[auth]
+admin_emails = ["you@gmail.com"]
+
+[google_oauth]
+client_id     = "YOUR_CLIENT_ID.apps.googleusercontent.com"
+client_secret = "YOUR_CLIENT_SECRET"
+
+# flow = "authorization_code"  (default) — browser redirect, requires a publicly
+#   reachable redirect URI and a Web Application OAuth client in Google Cloud Console.
+# flow = "device"              — device authorization grant, no redirect URI needed.
+#   Works on private networks. Requires a TV/Limited Input Device OAuth client.
+flow         = "authorization_code"
+redirect_uri = "https://your-domain:4447/api/auth/callback"
+
+[plex]
+url                = "http://your-plex-host:32400"
+token              = "YOUR_PLEX_TOKEN"
+library_section_id = ""            # leave blank; use Admin → Settings → Fetch from Plex
+
+[output]
+base_path           = "/media/video/youtube"
+path_template       = "{channel} [{channel_id}]/Season {yyyy}/[{date}] - {title} [{id}].{ext}"
+thumbnail_cache_dir = "/data/thumbnails"
+
+[sync]
+interval_hours = 6
+playlist_items = 50
+
+# [download]
+# extra_args = [
+#   "--cookies", "/config/cookies.txt",
+# ]

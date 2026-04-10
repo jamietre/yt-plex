@@ -4,8 +4,9 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use tracing::error;
 use serde::Deserialize;
-use yt_plex_common::config::{OutputConfig, PlexConfig};
+use yt_plex_common::config::{DownloadConfig, OutputConfig, PlexConfig};
 
 use crate::{routes::auth::SessionToken, AppState};
 
@@ -26,6 +27,7 @@ pub async fn get_settings(
     Json(serde_json::json!({
         "plex": cfg.plex,
         "output": cfg.output,
+        "download": cfg.download,
     }))
     .into_response()
 }
@@ -34,6 +36,8 @@ pub async fn get_settings(
 pub struct UpdateSettingsRequest {
     pub plex: PlexConfig,
     pub output: OutputConfig,
+    #[serde(default)]
+    pub download: DownloadConfig,
 }
 
 pub async fn update_settings(
@@ -48,6 +52,7 @@ pub async fn update_settings(
         let mut cfg = state.config.write().unwrap();
         cfg.plex = body.plex;
         cfg.output = body.output;
+        cfg.download = body.download;
     }
     let cfg = state.config.read().unwrap().clone();
     let path = state.config_path.clone();
@@ -56,4 +61,21 @@ pub async fn update_settings(
         return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to save config").into_response();
     }
     StatusCode::OK.into_response()
+}
+
+pub async fn list_plex_libraries(
+    State(state): State<AppState>,
+    SessionToken(token): SessionToken,
+) -> impl IntoResponse {
+    if !is_admin(&state, token.as_deref()) {
+        return (StatusCode::UNAUTHORIZED, "Admin required").into_response();
+    }
+    let config = state.config.read().unwrap().plex.clone();
+    match crate::plex::list_libraries(&config).await {
+        Ok(libs) => Json(libs).into_response(),
+        Err(e) => {
+            error!("list_plex_libraries: {e}");
+            (StatusCode::BAD_GATEWAY, e.to_string()).into_response()
+        }
+    }
 }

@@ -1,12 +1,13 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
     import { page } from '$app/stores';
+    import { navSearch } from '$lib/navSearch';
     import {
         listChannels, listVideos, ignoreVideo, unignoreVideo,
         submitJobByYoutubeId, syncChannel,
         type Channel, type Video, type VideoStatus
     } from '$lib/api';
-    import { createWsStore } from '$lib/ws';
+    import { wsMessages } from '$lib/ws';
     import Badge from '$lib/components/Badge.svelte';
     import Button from '$lib/components/Button.svelte';
     import EmptyState from '$lib/components/EmptyState.svelte';
@@ -29,9 +30,6 @@
     let selected = $state(new Set<string>());
     let bulkWorking = $state(false);
 
-    const ws = createWsStore();
-    let unsubWs: (() => void) | undefined;
-
     let searchTimer: ReturnType<typeof setTimeout> | null = null;
     let sentinel: HTMLDivElement | undefined;
     let observer: IntersectionObserver | null = null;
@@ -41,7 +39,7 @@
         loading = true;
         const currentOffset = reset ? 0 : offset;
         try {
-            const result = await listVideos(channelId ?? '', filter, showIgnored, search, LIMIT, currentOffset);
+            const result = await listVideos(channelId ?? '', filter, showIgnored, ftsSearch, LIMIT, currentOffset);
             if (reset) {
                 videos = result.videos;
                 selected = new Set();
@@ -60,13 +58,12 @@
     function resetAndLoad() { offset = 0; hasMore = false; loadPage(true); }
 
     onMount(async () => {
+        navSearch.set({ value: search, placeholder: 'Search titles…', onInput: handleSearchInput });
         try {
             const channels = await listChannels();
             channel = channels.find(c => c.id === channelId) ?? null;
         } catch { /* ignore */ }
         await loadPage(true);
-        ws.connect();
-        unsubWs = ws.subscribe(() => {});
 
         observer = new IntersectionObserver((entries) => {
             if (entries[0].isIntersecting && hasMore && !loading) loadPage(false);
@@ -75,14 +72,13 @@
     });
 
     onDestroy(() => {
-        ws.disconnect();
-        unsubWs?.();
+        navSearch.set(null);
         observer?.disconnect();
         if (searchTimer) clearTimeout(searchTimer);
     });
 
     $effect(() => {
-        const msg = $ws;
+        const msg = $wsMessages;
         if (!msg?.youtube_id) return;
         videos = videos.map(v => {
             if (v.youtube_id !== msg.youtube_id) return v;
@@ -94,8 +90,28 @@
         });
     });
 
-    function handleSearchInput(e: Event) {
-        search = (e.target as HTMLInputElement).value;
+    // Keep nav search input value in sync
+    $effect(() => {
+        navSearch.update(s => s ? { ...s, value: search } : s);
+    });
+
+    // Words with ≥ 3 chars go to the server FTS index.
+    // Words with < 3 chars (e.g. "3", "S4") are post-filtered on the client
+    // because FTS5 doesn't index tokens shorter than 3 characters.
+    const ftsSearch = $derived(
+        search.split(/\s+/).filter(w => w.length >= 3).join(' ') || ''
+    );
+    const shortTerms = $derived(
+        search.split(/\s+/).filter(w => w.length > 0 && w.length < 3).map(w => w.toLowerCase())
+    );
+    const displayVideos = $derived(
+        shortTerms.length === 0
+            ? videos
+            : videos.filter(v => shortTerms.every(t => v.title.toLowerCase().includes(t)))
+    );
+
+    function handleSearchInput(value: string) {
+        search = value;
         if (searchTimer) clearTimeout(searchTimer);
         searchTimer = setTimeout(resetAndLoad, 300);
     }
@@ -152,6 +168,11 @@
         bulkWorking = false;
     }
 
+    function isRecentlyPublished(publishedAt: string | null): boolean {
+        if (!publishedAt) return false;
+        return Date.now() - new Date(publishedAt).getTime() < 7 * 24 * 60 * 60 * 1000;
+    }
+
     async function bulkIgnore() {
         bulkWorking = true;
         for (const id of selected) { await handleIgnore(id).catch(() => {}); }
@@ -186,13 +207,6 @@
                 Ignored
             </label>
         </div>
-        <input
-            class="search-input"
-            type="search"
-            placeholder="Search titles…"
-            value={search}
-            oninput={handleSearchInput}
-        />
     </div>
 
     {#if selected.size > 0}
@@ -207,8 +221,9 @@
     {#if error}<p class="msg-error">{error}</p>{/if}
 
     <div class="grid">
-        {#each videos as video (video.youtube_id)}
+        {#each displayVideos as video (video.youtube_id)}
             {@const isSelected = selected.has(video.youtube_id)}
+            {@const isNew = isRecentlyPublished(video.published_at)}
             <div class="card" class:card-selected={isSelected}>
                 <label class="check-wrap">
                     <input
@@ -222,6 +237,7 @@
                     <div class="thumb">
                         <img src="/api/thumbnails/{video.youtube_id}" alt={video.title} loading="lazy" />
                         <span class="thumb-badge"><Badge status={video.status} /></span>
+                        {#if isNew}<span class="new-badge">NEW</span>{/if}
                     </div>
                 </a>
                 <div class="card-body">
@@ -298,22 +314,6 @@
         margin-left: 4px;
     }
     .toggle-label input { accent-color: var(--amber); }
-    .search-input {
-        margin-left: auto;
-        padding: 5px 12px;
-        background: var(--surface-2);
-        border: 1px solid var(--border);
-        color: var(--text);
-        border-radius: 20px;
-        font-size: 12px;
-        outline: none;
-        font-family: var(--font-ui);
-        min-width: 180px;
-        transition: border-color 0.15s;
-    }
-    .search-input:focus { border-color: var(--amber); }
-    .search-input::placeholder { color: var(--text-3); }
-
     /* Bulk bar */
     .bulk-bar {
         display: flex;
@@ -354,6 +354,20 @@
         background: var(--surface-3);
     }
     .thumb-badge { position: absolute; top: 5px; right: 5px; }
+    .new-badge {
+        position: absolute;
+        bottom: 5px;
+        left: 5px;
+        background: var(--amber);
+        color: #000;
+        font-size: 8px;
+        font-weight: 800;
+        font-family: var(--font-ui);
+        letter-spacing: 0.8px;
+        padding: 2px 5px;
+        border-radius: 3px;
+        line-height: 1;
+    }
 
     .card-body { padding: 7px 9px 8px; }
     .card-title {

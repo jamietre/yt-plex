@@ -1,59 +1,53 @@
 <script lang="ts">
-    import { startDeviceLogin, pollDeviceAuth, type DeviceLoginResponse } from '$lib/api';
-    import Button from '$lib/components/Button.svelte';
+    import { onMount, onDestroy } from 'svelte';
+    import { page } from '$app/stores';
+    import { goto } from '$app/navigation';
+    import { getAuthFlow, startDeviceLogin, pollDeviceAuth, type AuthFlow, type DeviceLoginResponse } from '$lib/api';
 
-    type Phase = 'idle' | 'waiting' | 'done' | 'error';
+    const errorMessages: Record<string, string> = {
+        denied:  'Access denied — your account is not authorised.',
+        invalid: 'Sign-in failed — invalid request. Please try again.',
+        server:  'A server error occurred. Please try again.',
+    };
 
-    let phase = $state<Phase>('idle');
-    let deviceInfo = $state<DeviceLoginResponse | null>(null);
-    let errorMsg = $state('');
-    let pollTimer: ReturnType<typeof setTimeout> | null = null;
-    let networkErrors = 0;
-    const MAX_NETWORK_ERRORS = 5;
+    const errorKey = $derived($page.url?.searchParams.get('error') ?? '');
+    const errorMsg = $derived(errorMessages[errorKey] ?? '');
 
-    function cancelPoll() {
-        if (pollTimer !== null) { clearTimeout(pollTimer); pollTimer = null; }
-    }
+    let flow = $state<AuthFlow>('authorization_code');
+    let device = $state<DeviceLoginResponse | null>(null);
+    let pollStatus = $state<'idle' | 'pending' | 'expired'>('idle');
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-    async function startLogin() {
-        cancelPoll();
-        phase = 'idle'; errorMsg = ''; deviceInfo = null; networkErrors = 0;
-        try {
-            deviceInfo = await startDeviceLogin();
-            phase = 'waiting';
-            schedulePoll(deviceInfo.interval);
-        } catch {
-            phase = 'error';
-            errorMsg = 'Failed to start sign-in. Please try again.';
+    onMount(async () => {
+        flow = await getAuthFlow();
+        if (flow === 'device') {
+            await startDevice();
         }
-    }
+    });
 
-    function schedulePoll(intervalSecs: number) {
-        pollTimer = setTimeout(doPoll, intervalSecs * 1000);
-    }
+    onDestroy(() => {
+        if (pollTimer) clearInterval(pollTimer);
+    });
 
-    async function doPoll() {
-        if (!deviceInfo) return;
+    async function startDevice() {
         try {
-            const result = await pollDeviceAuth(deviceInfo.poll_token);
-            networkErrors = 0;
-            if (result.status === 'pending') {
-                schedulePoll(result.interval ?? deviceInfo.interval);
-            } else if (result.status === 'done') {
-                phase = 'done';
-                window.location.href = '/';
-            } else if (result.status === 'expired') {
-                phase = 'error'; errorMsg = 'Sign-in timed out. Please try again.';
-            } else {
-                phase = 'error'; errorMsg = result.message ?? 'Sign-in failed. Please try again.';
-            }
+            device = await startDeviceLogin();
+            pollStatus = 'pending';
+            const interval = Math.max((device.interval ?? 5) * 1000, 5000);
+            pollTimer = setInterval(async () => {
+                if (!device) return;
+                const status = await pollDeviceAuth(device.poll_token);
+                if (status === 'done') {
+                    clearInterval(pollTimer!);
+                    goto('/');
+                } else if (status === 'expired') {
+                    clearInterval(pollTimer!);
+                    pollStatus = 'expired';
+                    device = null;
+                }
+            }, interval);
         } catch {
-            networkErrors++;
-            if (networkErrors >= MAX_NETWORK_ERRORS) {
-                phase = 'error'; errorMsg = 'Lost connection to server. Please try again.';
-            } else {
-                schedulePoll(deviceInfo.interval);
-            }
+            pollStatus = 'expired';
         }
     }
 </script>
@@ -63,32 +57,35 @@
         <h1 class="heading">yt-plex</h1>
         <p class="sub">Admin sign-in</p>
 
-        {#if phase === 'idle' || phase === 'error'}
-            {#if errorMsg}<p class="msg-error">{errorMsg}</p>{/if}
-            <Button variant="primary" onclick={startLogin}>Sign in with Google</Button>
+        {#if errorMsg}
+            <p class="msg-error">{errorMsg}</p>
+        {/if}
 
-        {:else if phase === 'waiting' && deviceInfo}
-            <p class="instruction">Click the link below to sign in:</p>
-            <a
-                class="auth-link"
-                href="{deviceInfo.verification_url}?user_code={deviceInfo.user_code}"
-                target="_blank"
-                rel="noreferrer"
-            >
-                Sign in with Google ↗
-            </a>
-            <div class="user-code">{deviceInfo.user_code}</div>
-            <p class="hint">Waiting for authorisation…</p>
+        {#if flow === 'authorization_code'}
+            <a href="/api/auth/login?return_to={encodeURIComponent(window.location.origin)}" class="btn-google">Sign in with Google</a>
 
-        {:else if phase === 'done'}
-            <p class="hint">Signed in! Redirecting…</p>
+        {:else if flow === 'device'}
+            {#if pollStatus === 'expired' || (pollStatus === 'idle' && !device)}
+                <p class="msg-error">Code expired or unavailable.</p>
+                <button class="btn-google" onclick={startDevice}>Try again</button>
+
+            {:else if device}
+                <p class="device-instructions">
+                    Visit <a href={device.verification_url} target="_blank" rel="noopener">{device.verification_url}</a>
+                    and enter this code:
+                </p>
+                <div class="device-code">{device.user_code}</div>
+                <p class="device-waiting">Waiting for sign-in…</p>
+            {:else}
+                <p class="device-waiting">Loading…</p>
+            {/if}
         {/if}
     </div>
 </div>
 
 <style>
     .page {
-        min-height: 100vh;
+        min-height: calc(100vh / var(--zoom, 1));
         display: flex;
         align-items: center;
         justify-content: center;
@@ -105,7 +102,7 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 12px;
+        gap: 16px;
     }
     .heading {
         font-family: var(--font-display);
@@ -116,28 +113,47 @@
         letter-spacing: 1px;
     }
     .sub { font-size: 12px; color: var(--text-3); margin: 0; }
+    .msg-error { color: var(--red); font-size: 13px; margin: 0; }
 
-    .msg-error   { color: var(--red);    font-size: 13px; }
-    .instruction { color: var(--text-2); font-size: 13px; margin: 0; }
-    .hint        { color: var(--text-3); font-size: 12px; margin: 0; }
-
-    .auth-link {
-        color: var(--amber);
-        font-size: 14px;
-        font-weight: 500;
-        text-decoration: none;
-    }
-    .auth-link:hover { text-decoration: underline; }
-
-    .user-code {
-        font-size: 2rem;
+    .btn-google {
+        display: inline-block;
+        background: var(--amber);
+        color: #000;
+        font-size: 13px;
         font-weight: 700;
-        letter-spacing: 0.25em;
-        color: var(--text);
-        font-family: monospace;
-        background: var(--surface-2);
-        padding: 8px 20px;
+        font-family: var(--font-ui);
+        padding: 9px 20px;
         border-radius: var(--radius);
+        text-decoration: none;
+        border: none;
+        cursor: pointer;
+        transition: background 0.12s;
+    }
+    .btn-google:hover { background: var(--amber-glow); }
+
+    .device-instructions {
+        font-size: 13px;
+        color: var(--text-2);
+        margin: 0;
+        line-height: 1.6;
+    }
+    .device-instructions a { color: var(--amber); }
+
+    .device-code {
+        font-family: var(--font-display);
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: 6px;
+        color: var(--text);
+        background: var(--surface-2);
         border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 12px 24px;
+    }
+
+    .device-waiting {
+        font-size: 12px;
+        color: var(--text-3);
+        margin: 0;
     }
 </style>

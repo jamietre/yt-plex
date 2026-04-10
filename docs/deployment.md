@@ -2,43 +2,42 @@
 
 ## Prerequisites
 
-- Docker and Docker Compose installed on the server
-- A Plex media directory the container can write to
-- Google OAuth credentials (client ID + secret) from [Google Cloud Console](https://console.cloud.google.com/)
+- Docker and Docker Compose on the target host
+- Google OAuth credentials (Client ID + Secret) — see [Google OAuth setup](#google-oauth-setup)
+- A Plex Media Server accessible from the target host
 
 ---
 
-## First-time setup
+## Installation (standalone)
 
-### 1. Clone and configure
+This procedure works on any host without needing the dev repo.
 
-On your **server**, create a working directory and config folder:
+### 1. Create the working directory
 
 ```bash
 mkdir -p ~/yt-plex/config
 cd ~/yt-plex
 ```
 
-Copy `docker-compose.yml` from the repo (or write it fresh):
+### 2. Write `docker-compose.yml`
 
 ```yaml
 services:
   yt-plex:
     image: yt-plex:latest
-    build: .
     restart: unless-stopped
     ports:
       - "3000:3000"
     volumes:
-      - ./config:/config
-      - yt-plex-data:/data
-      - /path/to/plex/media:/media   # ← change this
+      - ./config:/config       # config.toml
+      - ./data:/data           # SQLite DB + thumbnail cache
+      - /mnt/media2:/media     # Plex media directory — adjust host path as needed
 
-volumes:
-  yt-plex-data:
 ```
 
-Create `config/config.toml`:
+### 3. Write `config/config.toml`
+
+Copy from `config.toml.example` in the repo, or start from this template:
 
 ```toml
 [server]
@@ -54,77 +53,80 @@ client_secret = "YOUR_CLIENT_SECRET"
 [plex]
 url                = "http://your-plex-host:32400"
 token              = "YOUR_PLEX_TOKEN"
-library_section_id = "1"           # find this in Plex → Settings → Libraries
+library_section_id = ""            # leave blank; use Admin → Settings → Fetch from Plex
 
 [output]
-base_path          = "/media"
-path_template      = "{channel}/Season {yyyy}/{title} [{id}].{ext}"
+base_path           = "/media/video/youtube"
+path_template       = "{channel} [{channel_id}]/Season {yyyy}/[{date}] - {title} [{id}].{ext}"
 thumbnail_cache_dir = "/data/thumbnails"
 
-[database]
-path = "/data/db.sqlite"
-
 [sync]
-interval_hours  = 6
-playlist_items  = 50
+interval_hours = 6
+playlist_items = 50
 ```
 
-### 2. Build the image
+> See the [Plex integration section in the README](../README.md#plex-integration) for how `path_template` works with Absolute Series Scanner and YouTube Agent.
 
-From the **repo root** (where `Dockerfile` lives):
+### 4. Load the Docker image
+
+Either build it yourself from the repo root:
 
 ```bash
 docker build -t yt-plex:latest .
 ```
 
-The build is multi-stage (Node → Rust → Debian slim) and takes a few minutes on first run. Subsequent builds are fast thanks to layer caching.
-
-### 3. Ship to your server (if building locally)
+Or receive it from someone who built it:
 
 ```bash
-docker save yt-plex:latest | gzip | ssh user@yourserver 'docker load'
+docker load < yt-plex.tar.gz
 ```
 
-Then copy the compose file and config:
-
-```bash
-scp docker-compose.yml user@yourserver:~/yt-plex/
-scp -r config/         user@yourserver:~/yt-plex/
-```
-
-### 4. Start the container
+### 5. Start
 
 ```bash
 cd ~/yt-plex
 docker compose up -d
-docker compose logs -f     # watch startup; should print "Listening on 0.0.0.0:3000"
+docker compose logs -f    # should print "Listening on 0.0.0.0:3000"
+```
+
+Open `http://<host>:3000`.
+
+---
+
+## Updating
+
+```bash
+# Load the new image (built elsewhere or built locally)
+docker load < yt-plex.tar.gz
+
+cd ~/yt-plex
+docker compose up -d      # restarts with new image; DB migrations run automatically
 ```
 
 ---
 
-## Updating to a new version
+## Developer deploy workflow
+
+If you have the repo locally, use the mise tasks:
 
 ```bash
-# On the build machine:
-git pull
-docker build -t yt-plex:latest .
-docker save yt-plex:latest | gzip | ssh user@yourserver 'docker load'
-
-# On the server:
-cd ~/yt-plex
-docker compose up -d       # restarts with the new image; DB migrations run automatically
+mise run docker-build          # build image
+mise run docker-push-config    # copy config.toml + docker-compose.yml to $DEPLOY_HOST
+mise run docker-deploy         # ship image + restart container
+mise run docker-logs           # tail logs
 ```
 
-The SQLite database lives in the `yt-plex-data` named volume — it is **not** removed by `docker compose up -d` or `docker compose down`. Only `docker compose down -v` deletes volumes.
+`DEPLOY_HOST` defaults to `root@PRIVATE_IP_REDACTED` (set in `.env`). Override with:
+
+```bash
+DEPLOY_HOST=root@otherhost mise run docker-deploy
+```
 
 ---
 
 ## Finding your Plex token
 
-The easiest way:
-
-1. Open Plex Web → click any media item → `···` → Get Info → View XML.
-2. The URL contains `X-Plex-Token=<your-token>`.
+Plex Web → any media item → `···` → Get Info → View XML → copy `X-Plex-Token=` from the URL.
 
 ---
 
@@ -133,35 +135,30 @@ The easiest way:
 1. Go to [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials.
 2. Create an OAuth 2.0 Client ID → choose **TV and Limited Input devices**.
 3. Copy the Client ID and Client Secret into `config.toml`.
-4. No redirect URI is needed — yt-plex uses the device flow.
+4. No redirect URI needed — yt-plex uses the device flow.
 
 ---
 
 ## Volume reference
 
-| Mount | Purpose | Type |
-|-------|---------|------|
-| `/config` | `config.toml` | bind mount (`./config`) |
-| `/data` | SQLite DB + thumbnail cache | named volume (`yt-plex-data`) |
-| `/media` | Plex media output directory | bind mount (your path) |
+| Mount | Purpose |
+|-------|---------|
+| `./config:/config` | `config.toml` |
+| `./data:/data` | SQLite DB + thumbnail cache (persists across restarts) |
+| `/mnt/media2:/media` | Plex media output directory (adjust host path) |
 
 ---
 
 ## Useful commands
 
 ```bash
-# View logs
-docker compose logs -f yt-plex
+docker compose logs -f yt-plex                   # live logs
+docker compose exec yt-plex bash                 # shell inside container
+docker compose down                              # stop (data preserved)
+docker compose down -v                           # stop + wipe volumes (destructive)
 
-# Open a shell inside the container
-docker compose exec yt-plex bash
-
-# Force a full yt-dlp update inside the running container
-docker compose exec yt-plex bash -c "curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp"
-
-# Stop
-docker compose down
-
-# Stop and wipe all persistent data (destructive!)
-docker compose down -v
+# Update yt-dlp inside the running container
+docker compose exec yt-plex \
+  curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+  -o /usr/local/bin/yt-dlp
 ```

@@ -1,7 +1,7 @@
 <script lang="ts">
-    import { onMount, onDestroy } from 'svelte';
+    import { onMount } from 'svelte';
     import { listJobs, submitJob, type Job } from '$lib/api';
-    import { createWsStore } from '$lib/ws';
+    import { wsMessages } from '$lib/ws';
     import Badge from '$lib/components/Badge.svelte';
     import Button from '$lib/components/Button.svelte';
     import PageHeader from '$lib/components/PageHeader.svelte';
@@ -12,20 +12,12 @@
     let submitError = $state('');
     let submitting = $state(false);
 
-    const ws = createWsStore();
-
     onMount(async () => {
         try { jobs = await listJobs(); } catch { /* ignore */ }
-        ws.connect();
     });
-    onDestroy(() => ws.disconnect());
-
-    let unsubWs: (() => void) | undefined;
-    onMount(() => { unsubWs = ws.subscribe(() => {}); });
-    onDestroy(() => unsubWs?.());
 
     $effect(() => {
-        const msg = $ws;
+        const msg = $wsMessages;
         if (msg) {
             jobs = jobs.map(j =>
                 j.id === msg.job_id

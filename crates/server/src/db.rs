@@ -277,6 +277,20 @@ impl Db {
         Ok(())
     }
 
+    /// Return (youtube_id, file_path) for all downloaded videos in a channel.
+    pub fn list_downloaded_videos_for_channel(
+        &self,
+        channel_id: &str,
+    ) -> Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT youtube_id, file_path FROM videos
+             WHERE channel_id = ?1 AND file_path IS NOT NULL AND downloaded_at IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([channel_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     /// Return youtube_ids of all videos currently marked as downloaded.
     pub fn list_downloaded_youtube_ids(&self) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
