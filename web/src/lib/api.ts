@@ -115,6 +115,7 @@ export interface Channel {
     youtube_channel_id: string | null;
     name: string;
     last_synced_at: string | null;
+    path_prefix: string | null;
 }
 
 export interface Video {
@@ -147,15 +148,28 @@ export async function listAllChannels(): Promise<Channel[]> {
     return res.json();
 }
 
-export async function addChannel(url: string, name: string): Promise<Channel> {
+export async function addChannel(url: string, name: string, pathPrefix?: string): Promise<Channel> {
     const res = await fetch('/api/channels', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, name }),
+        body: JSON.stringify({ url, name, path_prefix: pathPrefix || null }),
     });
     if (!res.ok) {
         const text = await res.text();
         throw new Error(text || `addChannel failed: ${res.status}`);
+    }
+    return res.json();
+}
+
+export async function updateChannel(id: string, name: string, url: string, pathPrefix?: string): Promise<Channel> {
+    const res = await fetch(`/api/channels/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, url, path_prefix: pathPrefix || null }),
+    });
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `updateChannel failed: ${res.status}`);
     }
     return res.json();
 }
