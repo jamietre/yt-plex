@@ -23,7 +23,7 @@ fn validate_path_prefix(raw: &str) -> Result<String, &'static str> {
     if s.contains('\0') {
         return Err("Path prefix must not contain null bytes");
     }
-    for segment in s.split('/') {
+    for segment in s.split(['/', '\\']) {
         if segment == ".." {
             return Err("Path prefix must not contain '..' segments");
         }
@@ -124,6 +124,10 @@ pub async fn update_channel(
     match state.db.update_channel(&id, &body.name, &body.url, prefix.as_deref()) {
         Ok(ch) => Json(ch).into_response(),
         Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("not found") {
+                return (StatusCode::NOT_FOUND, "Channel not found").into_response();
+            }
             error!("update_channel: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, "Server error").into_response()
         }
@@ -313,5 +317,11 @@ mod tests {
     #[test]
     fn null_byte_rejected() {
         assert!(validate_path_prefix("foo\0bar").is_err());
+    }
+
+    #[test]
+    fn backslash_traversal_rejected() {
+        assert!(validate_path_prefix("foo\\..\\bar").is_err());
+        assert!(validate_path_prefix("..\\secret").is_err());
     }
 }
