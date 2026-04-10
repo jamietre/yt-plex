@@ -8,10 +8,15 @@
             return null;
         });
     }
+
+    function onKeydown(e: KeyboardEvent) {
+        if ($confirmState && e.key === 'Escape') respond(false);
+    }
 </script>
 
+<svelte:window onkeydown={onKeydown} />
+
 {#if $confirmState}
-    <svelte:window onkeydown={(e) => { if (e.key === 'Escape') respond(false); }} />
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div class="backdrop" onclick={() => respond(false)}>
         <div class="dialog" role="dialog" aria-modal="true"

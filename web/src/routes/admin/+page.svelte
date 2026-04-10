@@ -8,10 +8,13 @@
     import PageHeader from '$lib/components/PageHeader.svelte';
     import {
         getSettings, updateSettings, type Settings,
-        listChannels, addChannel, deleteChannel, syncChannel, rescanFilesystem,
+        listPlexLibraries, type PlexLibrary,
+        listChannels, addChannel, deleteChannel, syncChannel, rescanFilesystem, regenChannelMetadata,
         submitJob, listProfiles, createProfile, deleteProfile,
         type Channel, type Profile,
     } from '$lib/api';
+    import { showConfirm } from '$lib/confirm';
+    import { toast } from '$lib/toast';
 
     // Auth guard
     onMount(async () => {
@@ -35,6 +38,40 @@
     let settingsError = $state('');
     let settingsSaved = $state(false);
     let settingsSaving = $state(false);
+    let plexLibraries = $state<PlexLibrary[]>([]);
+    let plexLibrariesError = $state('');
+    let fetchingLibraries = $state(false);
+    async function fetchPlexLibraries() {
+        fetchingLibraries = true;
+        plexLibrariesError = '';
+        try {
+            plexLibraries = await listPlexLibraries();
+            // Drop any saved IDs that no longer exist in Plex
+            if (settings) {
+                const validIds = new Set(plexLibraries.map(l => l.id));
+                const filtered = selectedLibraryIds.filter(id => validIds.has(id));
+                settings = { ...settings, plex: { ...settings.plex, library_section_id: filtered.join(', ') } };
+            }
+        } catch (e: unknown) {
+            plexLibrariesError = e instanceof Error ? e.message : 'Failed to fetch libraries';
+        } finally {
+            fetchingLibraries = false;
+        }
+    }
+
+    function toggleLibrary(id: string) {
+        if (!settings) return;
+        const current = settings.plex.library_section_id
+            .split(',').map(s => s.trim()).filter(Boolean);
+        const next = current.includes(id)
+            ? current.filter(s => s !== id)
+            : [...current, id];
+        settings = { ...settings, plex: { ...settings.plex, library_section_id: next.join(', ') } };
+    }
+
+    const selectedLibraryIds = $derived(
+        settings?.plex.library_section_id.split(',').map(s => s.trim()).filter(Boolean) ?? []
+    );
 
     // ── Channels ─────────────────────────────────────────────────────────────
     let channels = $state<Channel[]>([]);
@@ -43,6 +80,7 @@
     let channelError = $state('');
     let addingChannel = $state(false);
     let syncingIds = $state(new Set<string>());
+    let regenningIds = $state(new Set<string>());
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let rescanning = $state(false);
     let rescanMsg = $state('');
@@ -54,7 +92,10 @@
     let submitting = $state(false);
 
     onMount(async () => {
-        try { settings = await getSettings(); } catch { settingsError = 'Failed to load settings'; }
+        try {
+            const s = await getSettings();
+            settings = { plex: s.plex, output: s.output, download: s.download ?? { extra_args: [] } };
+        } catch { settingsError = 'Failed to load settings'; }
         try { channels = await listChannels(); } catch { /* ignore */ }
     });
 
@@ -81,7 +122,12 @@
     }
 
     async function handleDeleteChannel(id: string) {
-        if (!confirm('Remove this channel and all its video metadata?')) return;
+        const ok = await showConfirm({
+            title: 'Remove channel?',
+            message: 'This removes the channel and all its video metadata. Downloaded files are not deleted.',
+            confirmLabel: 'Remove',
+        });
+        if (!ok) return;
         try {
             await deleteChannel(id);
             channels = channels.filter(c => c.id !== id);
@@ -96,6 +142,25 @@
         } catch (e: unknown) {
             rescanMsg = e instanceof Error ? e.message : 'Re-scan failed';
         } finally { rescanning = false; }
+    }
+
+    async function handleRegenMetadata(id: string) {
+        const ch = channels.find(c => c.id === id);
+        const ok = await showConfirm({
+            title: 'Regenerate metadata?',
+            message: `Re-fetch .info.json for all downloaded videos in "${ch?.name ?? 'this channel'}" without redownloading.`,
+            confirmLabel: 'Regenerate',
+        });
+        if (!ok) return;
+        regenningIds = new Set([...regenningIds, id]);
+        try {
+            const { queued } = await regenChannelMetadata(id);
+            toast(`Regenerating metadata for ${queued} video${queued !== 1 ? 's' : ''}`);
+        } catch {
+            toast('Failed to start metadata regeneration', { variant: 'error' });
+        } finally {
+            regenningIds = new Set([...regenningIds].filter(x => x !== id));
+        }
     }
 
     async function handleSyncChannel(id: string) {
@@ -143,7 +208,12 @@
     }
 
     async function handleDeleteProfile(id: number, name: string) {
-        if (!confirm(`Remove profile "${name}"? This will delete their ignore list and channel subscriptions.`)) return;
+        const ok = await showConfirm({
+            title: `Remove profile?`,
+            message: `Remove "${name}"? This will delete their ignore list and channel subscriptions.`,
+            confirmLabel: 'Remove',
+        });
+        if (!ok) return;
         try {
             await deleteProfile(id);
             profiles = profiles.filter(p => p.id !== id);
@@ -215,6 +285,9 @@
                                 <td class="td-actions">
                                     <Button variant="secondary" size="sm" onclick={() => handleSyncChannel(ch.id)} disabled={syncing}>
                                         ↻ Sync
+                                    </Button>
+                                    <Button variant="secondary" size="sm" onclick={() => handleRegenMetadata(ch.id)} disabled={regenningIds.has(ch.id)}>
+                                        ⟳ Regen metadata
                                     </Button>
                                     <Button variant="danger" size="sm" onclick={() => handleDeleteChannel(ch.id)} disabled={syncing}>
                                         Remove
@@ -290,7 +363,49 @@
                         <legend>Plex</legend>
                         <label>URL <Input bind:value={settings.plex.url} /></label>
                         <label>Token <Input bind:value={settings.plex.token} /></label>
-                        <label>Library Section ID <Input bind:value={settings.plex.library_section_id} /></label>
+                        <div class="lib-row">
+                            <span class="lib-label">Libraries</span>
+                            <button type="button" class="lib-fetch-btn" onclick={fetchPlexLibraries} disabled={fetchingLibraries}>
+                                {fetchingLibraries ? 'Fetching…' : plexLibraries.length ? 'Refresh' : 'Fetch from Plex'}
+                            </button>
+                        </div>
+                        {#if plexLibrariesError}
+                            <p class="msg-error">{plexLibrariesError}</p>
+                        {:else if plexLibraries.length > 0}
+                            <div class="lib-checklist">
+                                {#each plexLibraries as lib}
+                                    <label class="lib-check">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedLibraryIds.includes(lib.id)}
+                                            onchange={() => toggleLibrary(lib.id)}
+                                        />
+                                        {lib.title} <span class="lib-id">(id# {lib.id})</span>
+                                    </label>
+                                {/each}
+                            </div>
+                        {:else if selectedLibraryIds.length > 0}
+                            <p class="lib-hint">IDs: {settings.plex.library_section_id}</p>
+                        {/if}
+                    </fieldset>
+                    <fieldset>
+                        <legend>Download</legend>
+                        <label>
+                            Extra yt-dlp args
+                            <textarea
+                                class="args-textarea"
+                                rows="4"
+                                placeholder={"--cookies /path/to/cookies.txt\n--rate-limit 2M"}
+                                value={settings.download.extra_args.join('\n')}
+                                oninput={(e) => {
+                                    if (!settings) return;
+                                    const lines = (e.target as HTMLTextAreaElement).value
+                                        .split('\n').map(s => s.trim()).filter(Boolean);
+                                    settings = { plex: settings.plex, output: settings.output, download: { extra_args: lines } };
+                                }}
+                            ></textarea>
+                            <small>One argument per line. Inserted before the URL when running yt-dlp.</small>
+                        </label>
                     </fieldset>
                     <fieldset>
                         <legend>Output</legend>
@@ -433,6 +548,43 @@
     /* ── Messages ─────────────────────────────────────────────────────────── */
     .msg-error { color: var(--red);   font-size: 12px; margin: 6px 0; }
     .msg-ok    { color: var(--green); font-size: 12px; margin: 6px 0; }
+
+    /* ── Plex library picker ─────────────────────────────────────────────── */
+    .lib-row { display: flex; align-items: center; justify-content: space-between; }
+    .lib-label { font-size: 12px; color: var(--text-2); }
+    .lib-fetch-btn {
+        background: none; border: none; color: var(--amber);
+        font-size: 11px; font-family: var(--font-ui); cursor: pointer; padding: 0;
+    }
+    .lib-fetch-btn:hover { text-decoration: underline; }
+    .lib-fetch-btn:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
+    .lib-checklist { display: flex; flex-direction: column; margin-top: 4px; }
+    .lib-check {
+        display: flex; flex-direction: row; align-items: center; gap: 5px;
+        font-size: 11px; color: var(--text-2); cursor: pointer;
+        padding: 1px 0; line-height: 1.4; white-space: nowrap;
+    }
+    .lib-check input { accent-color: var(--amber); width: 11px; height: 11px; flex-shrink: 0; }
+    .lib-check:has(input:checked) { color: var(--text); }
+    .lib-id { color: var(--text-3); }
+    .lib-hint { font-size: 11px; color: var(--text-3); margin: 4px 0; }
+    .args-textarea {
+        font-family: monospace;
+        font-size: 11px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        color: var(--text);
+        border-radius: var(--radius);
+        padding: 6px 8px;
+        resize: vertical;
+        outline: none;
+        width: 100%;
+        box-sizing: border-box;
+        line-height: 1.6;
+        transition: border-color 0.15s;
+    }
+    .args-textarea:focus { border-color: var(--amber); }
+    .args-textarea::placeholder { color: var(--text-3); }
 
     /* ── Form ─────────────────────────────────────────────────────────────── */
     form { display: flex; flex-direction: column; gap: 16px; max-width: 540px; }
