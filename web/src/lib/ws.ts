@@ -20,6 +20,11 @@ const { subscribe, set } = writable<WsMessage | null>(null);
 let socket: WebSocket | null = null;
 let intentionalClose = false;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let hiddenAt: number | null = null;
+
+// After this many ms hidden, treat an apparently-OPEN socket as a zombie
+// and force a fresh connection when the tab becomes visible again.
+const ZOMBIE_THRESHOLD_MS = 30_000;
 
 function connect() {
     // Guard against all non-closed states (CONNECTING=0, OPEN=1, CLOSING=2).
@@ -52,10 +57,48 @@ function connect() {
     };
 }
 
+function forceReconnect() {
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    if (socket) {
+        socket.onclose = null;
+        socket.onerror = null;
+        socket.onmessage = null;
+        socket.close();
+        socket = null;
+    }
+    connect();
+}
+
 function disconnect() {
     intentionalClose = true;
     if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
     if (socket) { socket.close(); socket = null; }
+}
+
+// ── Reconnect on tab visibility change ───────────────────────────────────────
+// When a tab is suspended by the browser, the OS may silently drop the TCP
+// connection without sending a close frame. The server closes it, but the
+// client never receives onclose, leaving readyState === OPEN on a dead socket.
+// Re-check when the tab becomes visible and force-reconnect if needed.
+if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+            hiddenAt = Date.now();
+        } else {
+            const hiddenMs = hiddenAt !== null ? Date.now() - hiddenAt : 0;
+            hiddenAt = null;
+
+            if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
+                // Not connected at all — reconnect immediately (skip 3s retry delay)
+                if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+                connect();
+            } else if (socket.readyState === WebSocket.OPEN && hiddenMs > ZOMBIE_THRESHOLD_MS) {
+                // Socket appears OPEN but we were hidden long enough that the
+                // server likely dropped the connection without us knowing.
+                forceReconnect();
+            }
+        }
+    });
 }
 
 /** The shared WS message store. Call `wsConnect()` once from the layout. */

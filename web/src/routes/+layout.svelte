@@ -34,6 +34,39 @@
     onMount(() => wsConnect());
     onDestroy(() => wsDisconnect());
 
+    // Re-verify auth and profile when the tab becomes visible again.
+    // If either has expired while the tab was hidden, redirect rather than
+    // leaving the UI silently broken.
+    async function onVisibilityChange() {
+        if (document.visibilityState !== 'visible') return;
+        const path = $page.url.pathname;
+        if (PUBLIC_ROUTES.some(r => path.startsWith(r))) return;
+
+        const [adminResp, profileData] = await Promise.allSettled([
+            fetch('/api/auth/me'),
+            getProfileSession(),
+        ]);
+
+        if (adminResp.status === 'fulfilled') {
+            const nowAdmin = adminResp.value.ok;
+            if (isAdmin && !nowAdmin) {
+                // Session expired — redirect to login
+                window.location.href = '/login';
+                return;
+            }
+            isAdmin = nowAdmin;
+        }
+        if (profileData.status === 'fulfilled') {
+            profile = profileData.value;
+            if (!profile && !PUBLIC_ROUTES.some(r => path.startsWith(r))) {
+                goto('/select-profile');
+            }
+        }
+    }
+
+    onMount(() => document.addEventListener('visibilitychange', onVisibilityChange));
+    onDestroy(() => document.removeEventListener('visibilitychange', onVisibilityChange));
+
     onMount(async () => {
         applyPrefs(loadPrefs());
 

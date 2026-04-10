@@ -8,6 +8,7 @@
         type Channel, type Video, type VideoStatus
     } from '$lib/api';
     import { wsMessages } from '$lib/ws';
+    import { toast } from '$lib/toast';
     import Badge from '$lib/components/Badge.svelte';
     import Button from '$lib/components/Button.svelte';
     import EmptyState from '$lib/components/EmptyState.svelte';
@@ -123,7 +124,7 @@
                 v.youtube_id === youtubeId ? { ...v, status: 'in_progress' as VideoStatus } : v
             );
         } catch (e: unknown) {
-            alert(e instanceof Error ? e.message : 'Failed to queue download');
+            toast(e instanceof Error ? e.message : 'Failed to queue download', { variant: 'error' });
         }
     }
 
