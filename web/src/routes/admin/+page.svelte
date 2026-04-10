@@ -125,12 +125,13 @@
     }
 
     function handleFormSave(saved: Channel) {
-        if (editingChannel) {
+        const wasEditing = editingChannel !== null;
+        closeForm();
+        if (wasEditing) {
             channels = channels.map(c => c.id === saved.id ? saved : c);
         } else {
             channels = [...channels, saved];
         }
-        closeForm();
     }
 
     async function handleDeleteChannel(id: string) {
@@ -585,7 +586,6 @@
         margin-top: 8px;
         flex-wrap: wrap;
     }
-    .hint { font-size: 11px; color: var(--text-3); }
     .rescan-msg { font-size: 11px; color: var(--text-3); }
 
     /* ── Messages ─────────────────────────────────────────────────────────── */

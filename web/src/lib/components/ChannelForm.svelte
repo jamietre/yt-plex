@@ -10,10 +10,16 @@
         onCancel: () => void;
     } = $props();
 
-    let name = $state(channel?.name ?? '');
-    let url = $state(channel?.youtube_channel_url ?? '');
-    let prefix = $state(channel?.path_prefix ?? '');
+    let name = $state('');
+    let url = $state('');
+    let prefix = $state('');
     let saving = $state(false);
+
+    $effect(() => {
+        name = channel?.name ?? '';
+        url = channel?.youtube_channel_url ?? '';
+        prefix = channel?.path_prefix ?? '';
+    });
     let error = $state('');
 
     const isEdit = $derived(channel !== null);
