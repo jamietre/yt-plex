@@ -55,7 +55,7 @@ pub async fn add_channel(
     if !is_admin(&state, token.as_deref()) {
         return (StatusCode::UNAUTHORIZED, "Admin required").into_response();
     }
-    let channel = match state.db.insert_channel(&body.url, &body.name) {
+    let channel = match state.db.insert_channel(&body.url, &body.name, None) {
         Ok(ch) => ch,
         Err(e) => {
             error!("insert_channel: {e}");

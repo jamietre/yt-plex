@@ -87,6 +87,7 @@ pub struct Channel {
     /// YouTube channel ID in UCxxxxxxxxxxxxxxxx format.
     /// Populated on first sync; used in the {channel_id} path template variable.
     pub youtube_channel_id: Option<String>,
+    pub path_prefix: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

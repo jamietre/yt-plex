@@ -161,12 +161,12 @@ impl Db {
         rows.next().transpose().map_err(Into::into)
     }
 
-    pub fn insert_channel(&self, url: &str, name: &str) -> Result<Channel> {
+    pub fn insert_channel(&self, url: &str, name: &str, path_prefix: Option<&str>) -> Result<Channel> {
         let id = Uuid::new_v4().to_string();
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO channels (id, youtube_channel_url, name) VALUES (?1, ?2, ?3)",
-            rusqlite::params![id, url, name],
+            "INSERT INTO channels (id, youtube_channel_url, name, path_prefix) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![id, url, name, path_prefix],
         )?;
         Ok(Channel {
             id,
@@ -174,7 +174,28 @@ impl Db {
             name: name.to_owned(),
             last_synced_at: None,
             youtube_channel_id: None,
+            path_prefix: path_prefix.map(str::to_owned),
         })
+    }
+
+    pub fn update_channel(&self, id: &str, name: &str, url: &str, path_prefix: Option<&str>) -> Result<Channel> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE channels SET name = ?1, youtube_channel_url = ?2, path_prefix = ?3 WHERE id = ?4",
+            rusqlite::params![name, url, path_prefix, id],
+        )?;
+        drop(conn);
+        self.get_channel(id)?.ok_or_else(|| anyhow::anyhow!("channel not found after update"))
+    }
+
+    pub fn get_channel_by_youtube_id(&self, youtube_channel_id: &str) -> Result<Option<Channel>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, youtube_channel_url, name, last_synced_at, youtube_channel_id, path_prefix \
+             FROM channels WHERE youtube_channel_id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![youtube_channel_id], Self::row_to_channel)?;
+        rows.next().transpose().map_err(Into::into)
     }
 
     fn row_to_channel(row: &rusqlite::Row) -> rusqlite::Result<Channel> {
@@ -184,13 +205,14 @@ impl Db {
             name: row.get(2)?,
             last_synced_at: row.get(3)?,
             youtube_channel_id: row.get(4)?,
+            path_prefix: row.get(5)?,
         })
     }
 
     pub fn list_channels(&self) -> Result<Vec<Channel>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, youtube_channel_url, name, last_synced_at, youtube_channel_id FROM channels ORDER BY name ASC",
+            "SELECT id, youtube_channel_url, name, last_synced_at, youtube_channel_id, path_prefix FROM channels ORDER BY name ASC",
         )?;
         let rows = stmt.query_map([], Self::row_to_channel)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -199,7 +221,7 @@ impl Db {
     pub fn get_channel(&self, id: &str) -> Result<Option<Channel>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, youtube_channel_url, name, last_synced_at, youtube_channel_id FROM channels WHERE id = ?1",
+            "SELECT id, youtube_channel_url, name, last_synced_at, youtube_channel_id, path_prefix FROM channels WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![id], Self::row_to_channel)?;
         rows.next().transpose().map_err(Into::into)
@@ -596,9 +618,9 @@ impl Db {
     pub fn list_channels_for_profile(&self, profile_id: Option<i64>) -> Result<Vec<Channel>> {
         let conn = self.conn.lock().unwrap();
         let sql = match profile_id {
-            None => "SELECT id, youtube_channel_url, name, last_synced_at, youtube_channel_id FROM channels ORDER BY name ASC".to_string(),
+            None => "SELECT id, youtube_channel_url, name, last_synced_at, youtube_channel_id, path_prefix FROM channels ORDER BY name ASC".to_string(),
             Some(pid) => format!(
-                "SELECT id, youtube_channel_url, name, last_synced_at, youtube_channel_id FROM channels
+                "SELECT id, youtube_channel_url, name, last_synced_at, youtube_channel_id, path_prefix FROM channels
                  WHERE id IN (SELECT channel_id FROM profile_channels WHERE profile_id={pid})
                  ORDER BY name ASC"
             ),
@@ -757,6 +779,8 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE channels ADD COLUMN youtube_channel_id TEXT;",
     // ── v3: link sessions to their admin profile ──────────────────────────────
     "ALTER TABLE sessions ADD COLUMN profile_id INTEGER REFERENCES profiles(id) ON DELETE SET NULL;",
+    // ── v4: per-channel path prefix ───────────────────────────────────────────
+    "ALTER TABLE channels ADD COLUMN path_prefix TEXT;",
 ];
 
 fn run_migrations(conn: &Connection) -> Result<()> {
@@ -885,7 +909,7 @@ mod tests {
     #[test]
     fn insert_and_list_channels() {
         let db = test_db();
-        let ch = db.insert_channel("https://youtube.com/@Veritasium", "Veritasium").unwrap();
+        let ch = db.insert_channel("https://youtube.com/@Veritasium", "Veritasium", None).unwrap();
         assert_eq!(ch.name, "Veritasium");
         assert_eq!(ch.youtube_channel_url, "https://youtube.com/@Veritasium");
         assert!(ch.last_synced_at.is_none());
@@ -903,7 +927,7 @@ mod tests {
     #[test]
     fn delete_channel_removes_it() {
         let db = test_db();
-        let ch = db.insert_channel("https://youtube.com/@LTT", "LTT").unwrap();
+        let ch = db.insert_channel("https://youtube.com/@LTT", "LTT", None).unwrap();
         db.delete_channel(&ch.id).unwrap();
         assert_eq!(db.list_channels().unwrap().len(), 0);
     }
@@ -911,14 +935,14 @@ mod tests {
     #[test]
     fn set_channel_synced_updates_timestamp() {
         let db = test_db();
-        let ch = db.insert_channel("https://youtube.com/@test", "Test").unwrap();
+        let ch = db.insert_channel("https://youtube.com/@test", "Test", None).unwrap();
         db.set_channel_synced(&ch.id, "2026-04-05T12:00:00Z").unwrap();
         let updated = db.get_channel(&ch.id).unwrap().unwrap();
         assert_eq!(updated.last_synced_at.as_deref(), Some("2026-04-05T12:00:00Z"));
     }
 
     fn insert_test_channel(db: &Db) -> Channel {
-        db.insert_channel("https://youtube.com/@test", "Test").unwrap()
+        db.insert_channel("https://youtube.com/@test", "Test", None).unwrap()
     }
 
     #[test]
@@ -1160,7 +1184,7 @@ mod tests {
     fn subscribe_and_list_channels() {
         let db = test_db();
         let p = db.create_profile("Dave", None, false).unwrap();
-        let ch = db.insert_channel("https://youtube.com/@test", "Test").unwrap();
+        let ch = db.insert_channel("https://youtube.com/@test", "Test", None).unwrap();
 
         db.subscribe_channel(p.id, &ch.id).unwrap();
         let ids = db.list_profile_channel_ids(p.id).unwrap();
@@ -1174,8 +1198,8 @@ mod tests {
     fn list_channels_for_profile_filters_subscriptions() {
         let db = test_db();
         let p = db.create_profile("Eve", None, false).unwrap();
-        let ch1 = db.insert_channel("https://youtube.com/@A", "A").unwrap();
-        let ch2 = db.insert_channel("https://youtube.com/@B", "B").unwrap();
+        let ch1 = db.insert_channel("https://youtube.com/@A", "A", None).unwrap();
+        let ch2 = db.insert_channel("https://youtube.com/@B", "B", None).unwrap();
 
         // Admin (None) sees all
         assert_eq!(db.list_channels_for_profile(None).unwrap().len(), 2);
@@ -1250,5 +1274,56 @@ mod tests {
             rusqlite::params![p.id], |r| r.get(0),
         ).unwrap();
         assert_eq!(sub_count, 0);
+    }
+
+    #[test]
+    fn insert_channel_with_prefix_stores_and_retrieves_it() {
+        let db = test_db();
+        let ch = db.insert_channel("https://youtube.com/@Test", "Test", Some("Tech")).unwrap();
+        assert_eq!(ch.path_prefix.as_deref(), Some("Tech"));
+        let fetched = db.get_channel(&ch.id).unwrap().unwrap();
+        assert_eq!(fetched.path_prefix.as_deref(), Some("Tech"));
+    }
+
+    #[test]
+    fn insert_channel_without_prefix_is_none() {
+        let db = test_db();
+        let ch = db.insert_channel("https://youtube.com/@NoPrefix", "NoPrefix", None).unwrap();
+        assert!(ch.path_prefix.is_none());
+    }
+
+    #[test]
+    fn update_channel_changes_name_url_and_prefix() {
+        let db = test_db();
+        let ch = db.insert_channel("https://youtube.com/@Old", "Old", None).unwrap();
+        db.update_channel(&ch.id, "New", "https://youtube.com/@New", Some("Music")).unwrap();
+        let updated = db.get_channel(&ch.id).unwrap().unwrap();
+        assert_eq!(updated.name, "New");
+        assert_eq!(updated.youtube_channel_url, "https://youtube.com/@New");
+        assert_eq!(updated.path_prefix.as_deref(), Some("Music"));
+    }
+
+    #[test]
+    fn update_channel_clears_prefix_when_none() {
+        let db = test_db();
+        let ch = db.insert_channel("https://youtube.com/@Ch", "Ch", Some("Old")).unwrap();
+        db.update_channel(&ch.id, "Ch", "https://youtube.com/@Ch", None).unwrap();
+        let updated = db.get_channel(&ch.id).unwrap().unwrap();
+        assert!(updated.path_prefix.is_none());
+    }
+
+    #[test]
+    fn get_channel_by_youtube_id_finds_channel() {
+        let db = test_db();
+        let ch = db.insert_channel("https://youtube.com/@Test", "Test", None).unwrap();
+        db.set_channel_youtube_id(&ch.id, "UCabc123").unwrap();
+        let found = db.get_channel_by_youtube_id("UCabc123").unwrap();
+        assert_eq!(found.map(|c| c.id), Some(ch.id));
+    }
+
+    #[test]
+    fn get_channel_by_youtube_id_returns_none_for_unknown() {
+        let db = test_db();
+        assert!(db.get_channel_by_youtube_id("UCnobody").unwrap().is_none());
     }
 }
