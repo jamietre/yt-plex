@@ -180,11 +180,14 @@ impl Db {
 
     pub fn update_channel(&self, id: &str, name: &str, url: &str, path_prefix: Option<&str>) -> Result<Channel> {
         let conn = self.conn.lock().unwrap();
-        conn.execute(
+        let affected = conn.execute(
             "UPDATE channels SET name = ?1, youtube_channel_url = ?2, path_prefix = ?3 WHERE id = ?4",
             rusqlite::params![name, url, path_prefix, id],
         )?;
         drop(conn);
+        if affected == 0 {
+            return Err(anyhow::anyhow!("channel {} not found", id));
+        }
         self.get_channel(id)?.ok_or_else(|| anyhow::anyhow!("channel not found after update"))
     }
 
@@ -1296,20 +1299,31 @@ mod tests {
     fn update_channel_changes_name_url_and_prefix() {
         let db = test_db();
         let ch = db.insert_channel("https://youtube.com/@Old", "Old", None).unwrap();
-        db.update_channel(&ch.id, "New", "https://youtube.com/@New", Some("Music")).unwrap();
-        let updated = db.get_channel(&ch.id).unwrap().unwrap();
+        let updated = db.update_channel(&ch.id, "New", "https://youtube.com/@New", Some("Music")).unwrap();
         assert_eq!(updated.name, "New");
         assert_eq!(updated.youtube_channel_url, "https://youtube.com/@New");
         assert_eq!(updated.path_prefix.as_deref(), Some("Music"));
+        // also verify via get_channel
+        let fetched = db.get_channel(&ch.id).unwrap().unwrap();
+        assert_eq!(fetched.path_prefix.as_deref(), Some("Music"));
     }
 
     #[test]
     fn update_channel_clears_prefix_when_none() {
         let db = test_db();
         let ch = db.insert_channel("https://youtube.com/@Ch", "Ch", Some("Old")).unwrap();
-        db.update_channel(&ch.id, "Ch", "https://youtube.com/@Ch", None).unwrap();
-        let updated = db.get_channel(&ch.id).unwrap().unwrap();
+        let updated = db.update_channel(&ch.id, "Ch", "https://youtube.com/@Ch", None).unwrap();
         assert!(updated.path_prefix.is_none());
+        // also verify via get_channel
+        let fetched = db.get_channel(&ch.id).unwrap().unwrap();
+        assert!(fetched.path_prefix.is_none());
+    }
+
+    #[test]
+    fn update_channel_returns_error_for_nonexistent_id() {
+        let db = test_db();
+        let result = db.update_channel("nonexistent-id", "Name", "https://youtube.com/@x", None);
+        assert!(result.is_err());
     }
 
     #[test]
