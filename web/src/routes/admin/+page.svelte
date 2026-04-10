@@ -9,10 +9,12 @@
     import {
         getSettings, updateSettings, type Settings,
         listPlexLibraries, type PlexLibrary,
-        listChannels, addChannel, deleteChannel, syncChannel, rescanFilesystem, regenChannelMetadata,
+        listChannels, addChannel, updateChannel, deleteChannel, syncChannel,
+        rescanFilesystem, regenChannelMetadata,
         submitJob, listProfiles, createProfile, deleteProfile,
         type Channel, type Profile,
     } from '$lib/api';
+    import ChannelForm from '$lib/components/ChannelForm.svelte';
     import { showConfirm } from '$lib/confirm';
     import { toast } from '$lib/toast';
 
@@ -75,10 +77,8 @@
 
     // ── Channels ─────────────────────────────────────────────────────────────
     let channels = $state<Channel[]>([]);
-    let newChannelUrl = $state('');
-    let newChannelName = $state('');
-    let channelError = $state('');
-    let addingChannel = $state(false);
+    let formOpen = $state(false);
+    let editingChannel = $state<Channel | null>(null);
     let syncingIds = $state(new Set<string>());
     let regenningIds = $state(new Set<string>());
     let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -109,16 +109,28 @@
         finally { settingsSaving = false; }
     }
 
-    async function handleAddChannel() {
-        if (!newChannelUrl || !newChannelName) return;
-        addingChannel = true; channelError = '';
-        try {
-            const ch = await addChannel(newChannelUrl, newChannelName);
-            channels = [...channels, ch];
-            newChannelUrl = ''; newChannelName = '';
-        } catch (e: unknown) {
-            channelError = e instanceof Error ? e.message : 'Failed to add channel';
-        } finally { addingChannel = false; }
+    function openAdd() {
+        editingChannel = null;
+        formOpen = true;
+    }
+
+    function openEdit(ch: Channel) {
+        editingChannel = ch;
+        formOpen = true;
+    }
+
+    function closeForm() {
+        formOpen = false;
+        editingChannel = null;
+    }
+
+    function handleFormSave(saved: Channel) {
+        if (editingChannel) {
+            channels = channels.map(c => c.id === saved.id ? saved : c);
+        } else {
+            channels = [...channels, saved];
+        }
+        closeForm();
     }
 
     async function handleDeleteChannel(id: string) {
@@ -255,59 +267,70 @@
         {#if activeTab === 'channels'}
             <PageHeader title="Channels" />
 
-            <div class="add-row">
-                <Input bind:value={newChannelName} placeholder="Display name" class="name-input" />
-                <Input bind:value={newChannelUrl} type="url" placeholder="https://youtube.com/@Channel" class="url-input" />
-                <Button variant="primary" size="sm" onclick={handleAddChannel} disabled={addingChannel || !newChannelUrl || !newChannelName}>
-                    {addingChannel ? 'Adding…' : 'Add'}
-                </Button>
+            <div class="channels-toolbar">
+                <Button variant="primary" size="sm" onclick={openAdd}>+ Add channel</Button>
             </div>
-            {#if channelError}<p class="msg-error">{channelError}</p>{/if}
 
-            {#if channels.length > 0}
-                <table class="data-table">
-                    <thead>
-                        <tr><th>Name</th><th>Channel ID</th><th>Last synced</th><th></th></tr>
-                    </thead>
-                    <tbody>
-                        {#each channels as ch (ch.id)}
-                            {@const syncing = syncingIds.has(ch.id)}
-                            <tr class:row-dim={syncing}>
-                                <td class="td-primary">{ch.name}</td>
-                                <td class="td-mono">{ch.youtube_channel_id ?? '—'}</td>
-                                <td>
-                                    {#if syncing}
-                                        <span class="sync-status">⟳ Syncing…</span>
-                                    {:else}
-                                        {ch.last_synced_at ? new Date(ch.last_synced_at).toLocaleString() : 'never'}
-                                    {/if}
-                                </td>
-                                <td class="td-actions">
-                                    <Button variant="secondary" size="sm" onclick={() => handleSyncChannel(ch.id)} disabled={syncing}>
-                                        ↻ Sync
-                                    </Button>
-                                    <Button variant="secondary" size="sm" onclick={() => handleRegenMetadata(ch.id)} disabled={regenningIds.has(ch.id)}>
-                                        ⟳ Regen metadata
-                                    </Button>
-                                    <Button variant="danger" size="sm" onclick={() => handleDeleteChannel(ch.id)} disabled={syncing}>
-                                        Remove
-                                    </Button>
-                                </td>
-                            </tr>
-                        {/each}
-                    </tbody>
-                </table>
-            {:else}
-                <EmptyState message="No channels yet." />
-            {/if}
+            <div class="channels-layout">
+                <div class="channels-table-wrap">
+                    {#if channels.length > 0}
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>Name</th><th>Prefix</th><th>Channel ID</th><th>Last synced</th><th></th></tr>
+                            </thead>
+                            <tbody>
+                                {#each channels as ch (ch.id)}
+                                    {@const syncing = syncingIds.has(ch.id)}
+                                    <tr class:row-dim={syncing} class:row-editing={editingChannel?.id === ch.id}>
+                                        <td class="td-primary">{ch.name}</td>
+                                        <td class="td-mono">{ch.path_prefix ?? '—'}</td>
+                                        <td class="td-mono">{ch.youtube_channel_id ?? '—'}</td>
+                                        <td>
+                                            {#if syncing}
+                                                <span class="sync-status">⟳ Syncing…</span>
+                                            {:else}
+                                                {ch.last_synced_at ? new Date(ch.last_synced_at).toLocaleString() : 'never'}
+                                            {/if}
+                                        </td>
+                                        <td class="td-actions">
+                                            <Button variant="secondary" size="sm" onclick={() => openEdit(ch)}>
+                                                Edit
+                                            </Button>
+                                            <Button variant="secondary" size="sm" onclick={() => handleSyncChannel(ch.id)} disabled={syncing}>
+                                                ↻ Sync
+                                            </Button>
+                                            <Button variant="secondary" size="sm" onclick={() => handleRegenMetadata(ch.id)} disabled={regenningIds.has(ch.id)}>
+                                                ⟳ Regen metadata
+                                            </Button>
+                                            <Button variant="danger" size="sm" onclick={() => handleDeleteChannel(ch.id)} disabled={syncing}>
+                                                Remove
+                                            </Button>
+                                        </td>
+                                    </tr>
+                                {/each}
+                            </tbody>
+                        </table>
+                    {:else}
+                        <EmptyState message="No channels yet." />
+                    {/if}
 
-            <div class="rescan-row">
-                <Button variant="secondary" size="sm" onclick={handleRescan} disabled={rescanning}>
-                    {rescanning ? 'Scanning…' : '↺ Re-scan filesystem'}
-                </Button>
-                <span class="hint">Marks present files as downloaded; clears stale downloaded status for deleted files.</span>
+                    <div class="rescan-row">
+                        <Button variant="secondary" size="sm" onclick={handleRescan} disabled={rescanning}>
+                            {rescanning ? 'Rescanning…' : '↺ Rescan filesystem'}
+                        </Button>
+                        {#if rescanMsg}<span class="rescan-msg">{rescanMsg}</span>{/if}
+                    </div>
+                </div>
+
+                {#if formOpen}
+                    <ChannelForm
+                        channel={editingChannel}
+                        basePath={settings?.output.base_path ?? ''}
+                        onSave={handleFormSave}
+                        onCancel={closeForm}
+                    />
+                {/if}
             </div>
-            {#if rescanMsg}<p class="msg-ok">{rescanMsg}</p>{/if}
 
         {:else if activeTab === 'profiles'}
             <PageHeader title="Profiles" />
@@ -506,6 +529,26 @@
     .add-row :global(.url-input) { flex: 1; min-width: 200px; }
     .add-row :global(.name-input) { width: 160px; flex-shrink: 0; }
 
+    /* ── Channels layout ─────────────────────────────────────────────────── */
+    .channels-toolbar {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 12px;
+    }
+
+    .channels-layout {
+        display: flex;
+        align-items: flex-start;
+        gap: 0;
+    }
+
+    .channels-table-wrap {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .row-editing td { background: rgba(232, 160, 32, 0.05); }
+
     /* ── Table ────────────────────────────────────────────────────────────── */
     .data-table {
         width: 100%;
@@ -544,6 +587,7 @@
         flex-wrap: wrap;
     }
     .hint { font-size: 11px; color: var(--text-3); }
+    .rescan-msg { font-size: 11px; color: var(--text-3); }
 
     /* ── Messages ─────────────────────────────────────────────────────────── */
     .msg-error { color: var(--red);   font-size: 12px; margin: 6px 0; }
