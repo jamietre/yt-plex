@@ -527,7 +527,6 @@
         flex-wrap: wrap;
     }
     .add-row :global(.url-input) { flex: 1; min-width: 200px; }
-    .add-row :global(.name-input) { width: 160px; flex-shrink: 0; }
 
     /* ── Channels layout ─────────────────────────────────────────────────── */
     .channels-toolbar {
