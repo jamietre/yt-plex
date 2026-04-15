@@ -1,6 +1,6 @@
 services:
   yt-plex:
-    image: PRIVATE_IP_REDACTED:5000/yt-plex:latest
+    image: yt-plex:latest
     restart: unless-stopped
     environment:
       - XDG_DATA_HOME=/data

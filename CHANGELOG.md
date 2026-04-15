@@ -2,6 +2,9 @@
 
 ## [Unreleased] — feat/channel-browser
 
+### Changed
+- **Deploy scripts** — removed hardcoded private IP from `mise.toml`, `scripts/komodo-deploy.sh`, `docker-compose.yml`, and docs; `REGISTRY`, `DEPLOY_HOST`, `KOMODO_HOST` must now be set in `.env` (scripts fail with a clear error if missing)
+
 ### Added
 - Video detail page (`/browse/[channelId]/[videoId]`) with thumbnail, description, status, file path, and actions
 - Search input on channel browse page (debounced, FTS5 title-only)

@@ -56,7 +56,7 @@ pub async fn auth_flow(State(state): State<AppState>) -> impl IntoResponse {
 
 #[derive(Deserialize)]
 pub struct LoginParams {
-    /// Origin the login was initiated from, e.g. "http://PRIVATE_IP_REDACTED:32113".
+    /// Origin the login was initiated from, e.g. "http://192.168.1.100:32113".
     /// Stored server-side so the callback can redirect back to the local app.
     pub return_to: Option<String>,
 }

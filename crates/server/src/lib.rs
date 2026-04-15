@@ -27,7 +27,7 @@ pub struct DeviceCodeEntry {
 #[derive(Clone)]
 pub struct OAuthStateEntry {
     pub expires_at: Instant,
-    /// Origin the login was initiated from (e.g. "http://PRIVATE_IP_REDACTED:32113").
+    /// Origin the login was initiated from (e.g. "http://192.168.1.100:32113").
     /// Used to redirect back to the local app after the public callback completes.
     pub return_to: Option<String>,
 }

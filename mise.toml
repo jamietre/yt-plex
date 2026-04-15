@@ -39,12 +39,23 @@ description = "Delete the local SQLite database (forces schema re-creation on ne
 run = "rm -f ~/.local/share/yt-plex/db.sqlite ~/.local/share/yt-plex/db.sqlite-wal ~/.local/share/yt-plex/db.sqlite-shm"
 
 [tasks.docker-build]
-description = "Build the yt-plex Docker image"
-run = "docker build -t yt-plex:latest -t PRIVATE_IP_REDACTED:5000/yt-plex:latest ."
+description = "Build the yt-plex Docker image (set REGISTRY in .env to also tag for a private registry)"
+run = """
+docker build -t yt-plex:latest .
+if [ -n "${REGISTRY:-}" ]; then
+    docker tag yt-plex:latest "$REGISTRY/yt-plex:latest"
+fi
+"""
 
 [tasks.docker-push]
-description = 'Push yt-plex image to the local registry at PRIVATE_IP_REDACTED:5000'
-run = "docker push PRIVATE_IP_REDACTED:5000/yt-plex:latest"
+description = 'Push yt-plex image to the private registry (requires REGISTRY in .env)'
+run = """
+if [ -z "${REGISTRY:-}" ]; then
+    echo "Set REGISTRY in .env (e.g. REGISTRY=192.168.1.100:5000)"
+    exit 1
+fi
+docker push "$REGISTRY/yt-plex:latest"
+"""
 
 [tasks.docker-deploy]
 description = 'Push image to registry and redeploy via Komodo API'
@@ -52,15 +63,21 @@ depends = ["docker-push"]
 run = "bash scripts/komodo-deploy.sh"
 
 [tasks.docker-push-config]
-description = 'Push config.toml to $DEPLOY_HOST'
+description = 'Push config.toml to $DEPLOY_HOST (required in .env)'
 run = """
-HOST=${DEPLOY_HOST:-root@PRIVATE_IP_REDACTED}
-scp .config/yt-plex/config.toml "$HOST:/docker/yt-plex/config/config.toml"
+if [ -z "${DEPLOY_HOST:-}" ]; then
+    echo "Set DEPLOY_HOST in .env (e.g. DEPLOY_HOST=root@192.168.1.100)"
+    exit 1
+fi
+scp .config/yt-plex/config.toml "$DEPLOY_HOST:/docker/yt-plex/config/config.toml"
 """
 
 [tasks.docker-logs]
-description = 'Tail container logs on $DEPLOY_HOST'
+description = 'Tail container logs on $DEPLOY_HOST (required in .env)'
 run = """
-HOST=${DEPLOY_HOST:-root@PRIVATE_IP_REDACTED}
-ssh "$HOST" 'docker logs -f $(docker ps -qf name=yt-plex) 2>/dev/null || echo "Container not running"'
+if [ -z "${DEPLOY_HOST:-}" ]; then
+    echo "Set DEPLOY_HOST in .env (e.g. DEPLOY_HOST=root@192.168.1.100)"
+    exit 1
+fi
+ssh "$DEPLOY_HOST" 'docker logs -f $(docker ps -qf name=yt-plex) 2>/dev/null || echo "Container not running"'
 """

@@ -116,7 +116,7 @@ mise run docker-deploy         # ship image + restart container
 mise run docker-logs           # tail logs
 ```
 
-`DEPLOY_HOST` defaults to `root@PRIVATE_IP_REDACTED` (set in `.env`). Override with:
+`DEPLOY_HOST` must be set in `.env` (e.g. `DEPLOY_HOST=root@192.168.1.100`). Override on the command line:
 
 ```bash
 DEPLOY_HOST=root@otherhost mise run docker-deploy

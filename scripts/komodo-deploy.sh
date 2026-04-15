@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
 # Trigger a Komodo stack redeploy via the Execute API.
-# Requires KOMODO_API_KEY and KOMODO_API_SECRET to be set in the environment.
-# KOMODO_HOST defaults to http://PRIVATE_IP_REDACTED:9120
+# Requires KOMODO_HOST, KOMODO_API_KEY, and KOMODO_API_SECRET to be set in the environment.
 set -euo pipefail
 
-HOST="${KOMODO_HOST:-http://PRIVATE_IP_REDACTED:9120}"
+HOST="${KOMODO_HOST:-}"
 KEY="${KOMODO_API_KEY:-}"
 SECRET="${KOMODO_API_SECRET:-}"
 STACK="${KOMODO_STACK:-yt-plex}"
 
-if [ -z "$KEY" ] || [ -z "$SECRET" ]; then
-    echo "Set KOMODO_API_KEY and KOMODO_API_SECRET in .env to trigger redeploy automatically."
-    echo "Generate them in the Komodo UI: http://PRIVATE_IP_REDACTED:9120 → User Settings → API Keys"
-    exit 0
+if [ -z "$HOST" ] || [ -z "$KEY" ] || [ -z "$SECRET" ]; then
+    echo "Set KOMODO_HOST, KOMODO_API_KEY, and KOMODO_API_SECRET in .env to trigger redeploy."
+    exit 1
 fi
 
 echo "Triggering Komodo redeploy for stack: $STACK"

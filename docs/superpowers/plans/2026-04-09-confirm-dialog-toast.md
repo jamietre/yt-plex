@@ -469,7 +469,7 @@ git commit -m "feat: replace browser confirm/alert with ConfirmDialog and toast"
 cd /home/jamiet/code/yt-plex && mise run docker-build 2>&1 | tail -6
 ```
 
-Expected: build completes, image tagged as `PRIVATE_IP_REDACTED:5000/yt-plex:latest`.
+Expected: build completes, image tagged as `yt-plex:latest` (and `$REGISTRY/yt-plex:latest` if REGISTRY is set).
 
 - [ ] **Step 2: Deploy**
 
